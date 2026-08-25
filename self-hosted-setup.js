@@ -30,7 +30,7 @@ function validateInstallerBackend() {
   let url;
   try { url = new URL(String(process.env.COHORT_API_URL || '').trim()); }
   catch { throw new Error('COHORT_API_URL is missing or invalid'); }
-  if (url.protocol !== 'https:' || url.hostname !== 'script.google.com' || !/\/macros\/s\/[^/]+\/exec$/.test(url.pathname)) {
+  if (url.protocol !== 'https:' || url.hostname !== 'script.google.com' || !/(?:\/a\/(?:macros\/[^/]+|[^/]+\/macros)|\/macros)\/s\/[^/]+\/exec$/.test(url.pathname)) {
     throw new Error('COHORT_API_URL must be a deployed Apps Script Web App /exec URL');
   }
   installerSecret();

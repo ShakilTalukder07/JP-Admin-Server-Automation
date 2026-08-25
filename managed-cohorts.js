@@ -48,7 +48,7 @@ function validateAppsScriptUrl(value, label) {
   let url;
   try { url = new URL(String(value || '').trim()); }
   catch { throw new Error(`${label}.appsScriptUrl must be a valid URL`); }
-  if (url.protocol !== 'https:' || url.hostname !== 'script.google.com' || !/\/macros\/s\/[^/]+\/exec$/.test(url.pathname)) {
+  if (url.protocol !== 'https:' || url.hostname !== 'script.google.com' || !/(?:\/a\/(?:macros\/[^/]+|[^/]+\/macros)|\/macros)\/s\/[^/]+\/exec$/.test(url.pathname)) {
     throw new Error(`${label}.appsScriptUrl must be a deployed Google Apps Script /exec URL`);
   }
   url.search = '';
