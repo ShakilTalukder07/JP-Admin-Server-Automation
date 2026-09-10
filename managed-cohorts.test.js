@@ -64,6 +64,10 @@ test('managed cohort registry validates deployed Apps Script URLs', () => {
     validateAppsScriptUrl('https://script.google.com/macros/s/example/exec?unused=1#x', 'test'),
     'https://script.google.com/macros/s/example/exec',
   );
+  assert.equal(
+    validateAppsScriptUrl('https://script.google.com/a/macros/programming-hero.com/s/example/exec', 'test'),
+    'https://script.google.com/a/macros/programming-hero.com/s/example/exec',
+  );
   assert.throws(
     () => validateAppsScriptUrl('https://example.com/macros/s/example/exec', 'test'),
     /Google Apps Script/,
