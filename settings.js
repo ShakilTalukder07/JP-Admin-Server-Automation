@@ -94,6 +94,7 @@ const DEFAULTS = {
   channel_attendance: '',   // default: discussion
   channel_outreach: '',     // default: outreach
   channel_interview: '',    // default: interview-update
+  channel_job_tasks: '',    // default: job-task-update
   channel_jobs: '',         // default: job-tracking-sheet
   channel_workshop: '',     // default: communication-workshop
   channel_questions: '',    // default: qchannel legacy destination

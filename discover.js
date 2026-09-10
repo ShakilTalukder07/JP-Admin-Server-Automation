@@ -16,6 +16,7 @@ const NAME_MAP = {
   hired: ['successfully-hired'],
   outreach: ['outreach-update', 'outreach-updates', 'outreach'],
   interviewUpdates: ['interview-update', 'interview-updates'],
+  jobTaskUpdates: ['job-task-update', 'job-task-updates', 'task-update', 'task-updates', 'job-tasks', 'job-task'],
   workshop: ['communication-workshop'],
   jobTracking: ['job-tracking-sheet', 'job-tracking'],
   jobPosts: ['job-posts', 'job-post', 'job-opportunities', 'job-opportunity'],
