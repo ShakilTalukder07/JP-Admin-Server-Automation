@@ -28,7 +28,7 @@ function splitCompanyAndRole(value) {
 function looksLikeInterviewAnnouncement(text) {
   const source = clean(text, 4000);
   if (!source || !/\binterview\b/i.test(source)) return false;
-  const structured = /\b(?:interview\s*serial|company(?:\s+and\s+position)?|organisation|organization|role|position|interview\s+date(?:\s+and\s+time)?|date|time|location|remote\s*\/\s*onsite)\s*[:\-]/i.test(source);
+  const structured = /\b(?:interview\s*serial|company(?:\s+and\s+position)?|organisation|organization|role|position|designation|interview\s+date(?:\s+and\s+time)?|date|time|location|remote\s*\/\s*onsite)\s*[:\-]/i.test(source);
   const scheduled = /\b(?:scheduled|upcoming|call|invited|shortlisted|received|got|faced|completed|attended|today|tomorrow|next\s+(?:round|week)|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/i.test(source);
   const resultOnly = /\b(?:failed|rejected|result|feedback|passed)\b/i.test(source) &&
     !structured && !/\b(?:next\s+round|another\s+interview|scheduled|upcoming|faced|completed|attended)\b/i.test(source);
@@ -58,7 +58,7 @@ function parseInterviewAnnouncements(text) {
     const combinedDate = labeledValue(section, ['interview\\s+date\\s+and\\s+time']);
     const item = {
       company: labeledValue(section, ['company(?:\\s+name)?', 'organisation', 'organization']) || separated.company,
-      role: labeledValue(section, ['role', 'position', 'job\\s+title']) || separated.role,
+      role: labeledValue(section, ['role', 'position', 'job\\s+title', 'designation']) || separated.role,
       date: labeledValue(section, ['interview\\s+date(?:\\s+and\\s+time)?', 'date']) || combinedDate,
       time: labeledValue(section, ['interview\\s+time', 'time']),
       location: labeledValue(section, ['remote\\s*\\/\\s*onsite', 'location', 'mode', 'venue']),
