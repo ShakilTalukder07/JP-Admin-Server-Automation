@@ -200,6 +200,7 @@ async function main() {
     registerSelfHostedSetup(client, { onConfigured: activateConfiguredClient });
     client.once('clientReady', async () => {
       console.log(`✅ Installer logged in as ${client.user.tag}`);
+      runtimeHealth.markReady();
       try {
         await registerSelfHostedSlashCommands(client);
         const restored = await restoreSelfHostedCohort(client);
