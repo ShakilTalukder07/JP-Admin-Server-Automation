@@ -9,6 +9,7 @@ Run these in private `#bot-admin`, in order:
 ```text
 !syncmembers
 !repairpipelines
+!rolerepair #discussion
 !checkperms
 !doctor
 !forms
@@ -17,7 +18,14 @@ Run these in private `#bot-admin`, in order:
 !control
 ```
 
-`!syncmembers` includes current non-bot, non-supervisor server members even if they did not complete intake. `!repairpipelines` adds or repairs operational identity rows without deleting history. `!checkattendance` and `!checkjobsheets` are private diagnostics; they do not ping students. Fix every required `!doctor` failure before enabling public automation. Optional features such as Groq may remain off if they were intentionally not configured.
+`!syncmembers` includes current non-bot, non-supervisor server members even if they did not complete intake. `!repairpipelines` adds or repairs operational identity rows without deleting history. For a new cohort, run `!automation starter` once: quiet essentials stay enabled and noisy programme channels remain hidden until their matching automation starts. `!checkattendance` and `!checkjobsheets` are private diagnostics; they do not ping students. Fix every required `!doctor` failure before enabling public automation. Optional features such as Groq may remain off if they were intentionally not configured.
+
+Run `!rolerepair` before inviting students when possible. If members already
+exist, it assigns independent division, Dhaka-area, availability, work-mode,
+English, and multi-skill roles from saved intake answers. Members missing role
+data are mentioned in the selected channel with a private form, then only the
+remaining members are mentioned once more after two hours. No role object,
+channel, message, or Sheet row is deleted.
 
 ## Daily mentor routine
 
@@ -28,7 +36,7 @@ Run these in private `#bot-admin`, in order:
 | During the day | `!checkpipelines YYYY-MM-DD` | None |
 | Before a jobs follow-up | `!checkjobsheets YYYY-MM-DD` | None |
 | Attendance closes | `!closeform` | Closes the Form, then posts attendance after 30 seconds |
-| End of day | Review `!leaves`, `!checkpipelines YYYY-MM-DD all`, and `!control` | None unless you approve/reject a leave |
+| End of day | Review `!openleaves`, `!checkpipelines YYYY-MM-DD all`, and `!control` | None unless you approve/reject a leave |
 | Weekly review | `!weeklyreport` and, if used, `!leaderboard` | Posts the selected leaderboard |
 
 Use `!closeform silent` when a Form must close without an attendance post. Use `!attendance` only when you deliberately want an immediate manual attendance post. Commands such as `!jobscheck`, `!followup ...`, `!activityprompt ...`, reminders, and `!say` can publish or ping; do not use them as diagnostics.
@@ -52,7 +60,7 @@ Presence comes from the active Form responses matched to the current Discord ros
    - truly empty new cohort: `!setupsheets empty confirm`
 2. Run `!syncmembers` so every current student has an operational row.
 3. Students place their public Google Sheet tracker links in the configured jobs channel. The selected Sheet-tab `gid` in each link is preserved.
-4. Run `!backfilljobsheets` once to import existing tracker links from channel history. The import is idempotent.
+4. Run `!backfilljobsheets` to import tracker links from the latest three calendar days. Use `!backfilljobsheets 7 days` or another 1-30-day window only when needed. The import is idempotent and does not change older daily job counts.
 5. Run `!checkjobsheets` privately. It reads public tracker tabs, reports invalid or unparseable dates, and never pings students or writes job scores/counts.
 6. Use `!checkjobsheets YYYY-MM-DD` for a known date when verifying daily counts.
 7. Use `!jobscheck` only when you intentionally want the student-facing exhaustive report; it can list and ping students.
@@ -78,6 +86,20 @@ Set the operating values in private:
 
 Use `!target <metric> <amount>`, `!time <name> HH:MM`, `!schedule <feature> <days>`, and `!automation start|stop <key>` only after reviewing the current values. `weeklyreport` and `leaderboard` have separate switches and schedules. A manual command remains available even when its automatic switch is off. Before the first public run, use `!doctor schedules` and confirm the cohort timezone/work calendar.
 
+`!rtbr` additionally reconciles the visible **Right to Be Referred** role. Set
+the qualification count, rolling window, and weekly clock with:
+
+```text
+!rtbr top 10
+!rtbr days 7
+!rtbr time 20:00
+!schedule rtbr thu
+```
+
+The calculation requires verified current Discord identities before changing
+membership, so an incomplete identity cannot silently displace an existing
+qualifier.
+
 ## Leave request and approval
 
 Student flow:
@@ -88,8 +110,8 @@ Student flow:
 
 Mentor flow:
 
-1. Run `!leaves` in private `#bot-admin`.
-2. Review the pending request card and use **Approve**, **Adjust dates**, or **Reject**.
+1. Run `!openleaves` (or the older alias `!leaves`) in private `#bot-admin`.
+2. Review the oldest pending request in the single manager. Use **Previous**, **Refresh**, and **Next** to move without posting duplicate cards, then use **Approve**, **Adjust dates**, or **Reject**.
 3. Add the required mentor note and confirm the exact dates.
 4. If buttons are unavailable, use:
 
@@ -107,17 +129,18 @@ For an adjusted range, use the date controls in the panel. Approved working date
 | Overall health | `!doctor` | `!doctor <check>` |
 | Channel permissions | `!checkperms` | `!repairpermissions` |
 | Current students | `!syncmembers` | `!audit`, `!profilecheck` |
+| Profile roles | `!doctor onboarding` | `!rolerepair [#channel]` |
 | Attendance | `!formstatus` | `!openform`, `!closeform`, `!checkattendance` |
 | Combined data readiness | `!checkpipelines YYYY-MM-DD` | `!repairpipelines` |
-| Jobs | `!checkjobsheets YYYY-MM-DD` | `!backfilljobsheets`, deliberate `!jobscheck` |
-| Leave | `!leaves` | approve/adjust/reject with a note |
+| Jobs | `!checkjobsheets YYYY-MM-DD` | `!backfilljobsheets [N days]`, deliberate `!jobscheck` |
+| Leave | `!openleaves` | page through requests, then approve/adjust/reject with a note |
 | Schedules and switches | `!control` | `!schedule`, `!automation`, `!times`, `!targets` |
 | Weekly review | `!weeklyreport` | `!leaderboard`, `!rtbr` |
 | Find any command | `!help` or `!jp <question>` | See `MENTOR_COMMAND_REFERENCE.md` |
 
 ## Command safety levels
 
-- **Private/read-only:** `!doctor`, `!checkperms`, `!checkattendance`, `!checkpipelines`, `!checkjobsheets`, `!forms`, `!formstatus`, `!leaves`, `!control`, `!settings`, `!times`, `!targets`, `!schedule`.
+- **Private/read-only:** `!doctor`, `!checkperms`, `!checkattendance`, `!checkpipelines`, `!checkjobsheets`, `!forms`, `!formstatus`, `!openleaves`, `!leaves`, `!control`, `!settings`, `!times`, `!targets`, `!schedule`.
 - **Private but changes data/configuration:** setup, repair, sync, backfill, target/time/schedule/switch, supervisor, status, mailer, and leave-decision commands.
 - **Public or can ping:** `!openform`, normal `!closeform`, `!attendance`, `!jobscheck`, `!leaderboard`, `!weeklyreport`, `!rtbr`, `!followup ...`, reminders, activity prompts, `!say`, and announcements.
 
@@ -125,10 +148,12 @@ The complete categorized list is in `MENTOR_COMMAND_REFERENCE.md`. The live priv
 
 ## Recovery without deleting data
 
-- Bot offline: check Render **Live**, then `/health`, then Render logs.
+- Bot offline: check Render **Live**, then `/health`. HTTP 200 with `ready` means Discord is connected; `scheduled_offline` means the saved operating window is intentionally closed; HTTP 503 means startup or Discord readiness failed. Then inspect Render events/logs and the public Render status page before changing tokens or channels.
 - Attendance mismatch: `!checkattendance` → `!repairattendance` → recheck.
 - Jobs mismatch: `!checkjobsheets <date>` → verify tracker `gid` and dates → recheck.
 - Missing students: enable **Server Members Intent**, then `!syncmembers`.
+- Missing or stale profile roles: move the bot role above managed roles, run `!doctor onboarding`, then `!rolerepair [#channel]`.
 - Channel issue: `!checkperms` → `!repairpermissions`; do not delete or recreate channels.
 - Backend issue: verify the existing Apps Script `/exec` deployment and matching secret, then `!doctor sheet` and `!doctor post`.
 - Duplicate-looking output: stop the automation switch, check the schedule/logs, and verify the module was not registered twice before restarting. Backfills and leave decisions have durable/idempotent guards, but public commands should still be run once.
+- Regional Render outage: on a trusted local computer run `npm ci`, copy `.env.failover.example` to the gitignored `.env.failover`, and fill it only with this mentor-owned deployment's Render health URL, public Discord Application ID, cohort identity, and private credentials. Then run `npm run start:failover`. The guard refuses legacy/wrong cohort or bot identities, refuses to start while Render is healthy, and automatically stops the local bot when the primary health endpoint recovers. Never run the same token in two healthy bot processes.

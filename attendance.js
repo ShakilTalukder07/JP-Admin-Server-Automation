@@ -23,6 +23,7 @@ const {
 
 // remembers which date was already posted per cohort (in-memory)
 const lastPosted = {};
+const publicationRuns = new Map();
 
 function markPosted(cohort) {
   lastPosted[cohort.guildId] = new Date().toLocaleDateString('en-CA', { timeZone: cohort.timezone });
@@ -41,6 +42,184 @@ function attendanceIdentityKey(student) {
   if (discordId) return `id:${discordId}`;
   const email = String(student?.email || '').trim().toLowerCase();
   return email ? `email:${email}` : '';
+}
+
+function attendanceNameKey(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function attendanceResponsePolicy(data) {
+  return {
+    backendBlocked: data?.blocked === true,
+    blockReason: String(data?.blockReason || ''),
+    rejectedIdentityResponses: (data?.identityIssues || []).length,
+    invalidTimestampRows: (data?.invalidDateRows || []).length,
+  };
+}
+
+// A same-name active account in both present and absent results is usually a
+// duplicate Discord account. Never guess which account should be removed and
+// never publicly accuse the absent account until a supervisor resolves it.
+function conflictingAttendanceIdentities(data) {
+  const presentByName = new Map();
+  for (const student of [...(data?.present || []), ...(data?.leave || [])]) {
+    const key = attendanceNameKey(student.name);
+    if (key) presentByName.set(key, student);
+  }
+  return (data?.absent || []).map(absent => ({
+    key: attendanceNameKey(absent.name),
+    present: presentByName.get(attendanceNameKey(absent.name)),
+    absent,
+  })).filter(item => item.key && item.present &&
+    String(item.present.discordId || '') !== String(item.absent.discordId || ''));
+}
+
+function attendancePublicationKey(cohort, date) {
+  return `attendance_publication_v1_${cohort.guildId}_${date}`;
+}
+
+function parseAttendancePublication(value, date, channelId) {
+  try {
+    const parsed = JSON.parse(String(value || '{}'));
+    if (parsed.date !== date || String(parsed.channelId || '') !== String(channelId || '')) return null;
+    return {
+      date,
+      channelId: String(channelId),
+      summaryId: String(parsed.summaryId || ''),
+      segmentIds: Array.isArray(parsed.segmentIds)
+        ? parsed.segmentIds.map(String).filter(Boolean) : [],
+    };
+  } catch { return null; }
+}
+
+function attendanceSegments(absent, date) {
+  if (!absent.length) {
+    return [{
+      content: `🎉 **Attendance ${date}: everyone submitted attendance or had approved leave. Outstanding!**`,
+      ping: false,
+    }];
+  }
+  const lines = absent.map(student => {
+    const tag = student.discordId ? `<@${student.discordId}>` : `**${student.name}**`;
+    let line = `❌ ${tag}`;
+    if (student.history && student.history.total > 0) {
+      line += ` — missed ${student.history.missed} of last ${student.history.total} sessions`;
+      if (student.history.streak >= 3) line += ` 🔴 ${student.history.streak} in a row`;
+    }
+    return line;
+  });
+  const bodyChunks = chunkLines(lines, 1740);
+  return bodyChunks.map((body, index) => ({
+    content: [
+      index === 0 ? '@everyone' : '',
+      `📢 **Attendance ${date} — absent students (part ${index + 1}/${bodyChunks.length})**`,
+      body,
+    ].filter(Boolean).join('\n'),
+    ping: true,
+  }));
+}
+
+async function discoverAttendancePublication(channel, botId, date) {
+  const messages = [];
+  let before;
+  for (let page = 0; page < 5; page++) {
+    const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+    const values = [...batch.values()];
+    if (!values.length) break;
+    messages.push(...values);
+    before = values[values.length - 1].id;
+    if (messages.some(message => message.author?.id === botId &&
+      message.embeds?.some(embed => String(embed.title || '').endsWith(`Daily Attendance — ${date}`)))) break;
+  }
+  const summaries = messages.filter(message => message.author?.id === botId &&
+    message.embeds?.some(embed => String(embed.title || '').endsWith(`Daily Attendance — ${date}`)));
+  const summary = summaries.sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0] || null;
+  if (!summary) return { summary: null, segments: [] };
+  const segments = messages.filter(message => {
+    if (message.author?.id !== botId || message.id === summary.id) return false;
+    if (message.createdTimestamp < summary.createdTimestamp ||
+        message.createdTimestamp > summary.createdTimestamp + 10 * 60 * 1000) return false;
+    const content = String(message.content || '');
+    return content.includes(`Attendance ${date}`) ||
+      /Absent today — please submit attendance daily|Everyone submitted attendance today/.test(content);
+  }).sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  return { summary, segments };
+}
+
+async function publishAttendance(client, cohort, channel, embed, segments) {
+  const key = `${cohort.guildId}:${embed.title}`;
+  const previousRun = publicationRuns.get(key) || Promise.resolve();
+  const run = previousRun.catch(() => {}).then(async () => {
+    let stored = null;
+    try {
+      const response = await appsScriptGet(cohort, {
+        action: 'getstate', k: attendancePublicationKey(cohort, embed.date),
+      }, { label: 'Attendance publication state' });
+      stored = parseAttendancePublication(response.value, embed.date, channel.id);
+    } catch (error) {
+      console.error(`[attendance] ${cohort.name} publication state read failed:`, error.message);
+    }
+
+    let summary = stored?.summaryId
+      ? await channel.messages.fetch(stored.summaryId).catch(() => null) : null;
+    let existingSegments = [];
+    if (stored?.segmentIds?.length) {
+      existingSegments = (await Promise.all(stored.segmentIds.map(id =>
+        channel.messages.fetch(id).catch(() => null)))).filter(Boolean);
+    }
+    if (!summary) {
+      const discovered = await discoverAttendancePublication(channel, client.user.id, embed.date);
+      summary = discovered.summary;
+      if (!existingSegments.length) existingSegments = discovered.segments;
+    }
+
+    const updated = Boolean(summary);
+    if (summary) await summary.edit({ embeds: [embed.payload] });
+    else summary = await channel.send({ embeds: [embed.payload] });
+
+    const active = [];
+    for (let i = 0; i < segments.length; i++) {
+      const payload = {
+        content: segments[i].content,
+        allowedMentions: updated ? { parse: [] } :
+          (segments[i].ping ? { parse: ['users', 'everyone'] } : { parse: [] }),
+      };
+      let message = existingSegments[i];
+      if (message) await message.edit(payload);
+      else message = await channel.send(payload);
+      active.push(message);
+      await sleep(500);
+    }
+    for (const stale of existingSegments.slice(segments.length)) {
+      await stale.edit({
+        content: `ℹ️ **Attendance ${embed.date} updated:** this earlier segment is no longer current. See the attendance report above.`,
+        allowedMentions: { parse: [] },
+      });
+    }
+
+    try {
+      await appsScriptPost(cohort, {
+        action: 'setState',
+        k: attendancePublicationKey(cohort, embed.date),
+        v: JSON.stringify({
+          date: embed.date,
+          channelId: channel.id,
+          summaryId: summary.id,
+          segmentIds: active.map(message => message.id),
+        }),
+      }, { idempotent: true, label: 'Attendance publication state write' });
+    } catch (error) {
+      console.error(`[attendance] ${cohort.name} publication state write failed:`, error.message);
+    }
+    return { updated, summaryId: summary.id, segmentIds: active.map(message => message.id) };
+  });
+  publicationRuns.set(key, run);
+  try { return await run; }
+  finally { if (publicationRuns.get(key) === run) publicationRuns.delete(key); }
 }
 
 // Apps Script also applies this rule. Keeping a second check immediately
@@ -131,8 +310,15 @@ function setupAttendance(client) {
     const cohort = cohorts.find(c => c.guildId === msg.guildId);
     if (!cohort || !cohort.supervisorIds.includes(msg.author.id)) return;
     if (command === '!attendance') {
-      await msg.reply('📋 Posting attendance now...');
-      await postAttendance(client, cohort);
+      const requestedDate = content.split(/\s+/)[1] || '';
+      const parsedDate = requestedDate ? new Date(`${requestedDate}T12:00:00.000Z`) : null;
+      if (requestedDate && (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ||
+          Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== requestedDate)) {
+        await msg.reply('Use `!attendance` for today or `!attendance YYYY-MM-DD` to repair a previous report.');
+        return;
+      }
+      await msg.reply(`📋 Rechecking attendance and posting or updating ${requestedDate || 'today'}...`);
+      await postAttendance(client, cohort, requestedDate);
       return;
     }
 
@@ -189,7 +375,7 @@ function setupAttendance(client) {
             footer: {
               text: ready
                 ? 'Attendance-ready: every active student has one usable row and today has no unmatched response.'
-                : 'Run !repairattendance for missing rows; duplicates, invalid dates, and unmatched responses require review.',
+                : 'Run !repairattendance for missing rows. Unmatched identities are rejected; editable dates use the Form Timestamp.',
             },
             timestamp: new Date().toISOString(),
           }],
@@ -361,7 +547,7 @@ function setupAttendance(client) {
             `• Outreach summaries reconciled: ${data.outreachSummaries?.reconciledStudents || 0} student(s) from ${data.outreachSummaries?.durableEvents || 0} durable event(s)`,
             `• Inactive rows styled: Attendance ${data.statusStyles?.attendance?.inactive || 0} · Jobs ${data.statusStyles?.jobs?.inactive || 0} · Outreach ${data.statusStyles?.outreach?.inactive || 0} · Interviews ${data.statusStyles?.interviews?.inactive || 0}`,
             '• Job_Sheets, Jobs_Daily, Interview_Log, Outreach_Log, and Outreach_Daily schemas verified.',
-            'Next: `!checkpipelines` and, when needed, `!backfilljobsheets` / `!backfilloutreach`.',
+            'Next: `!checkpipelines` and, when needed, `!backfilljobsheets [N days]` / `!backfilloutreach [N days]` (default 3).',
           ].join('\n'),
           allowedMentions: { parse: [] },
         });
@@ -502,19 +688,27 @@ function setupAttendance(client) {
   });
 }
 
-async function postAttendance(client, cohort) {
+async function postAttendance(client, cohort, requestedDate = '') {
   try {
     // Attendance must use the current Discord membership, not yesterday's
     // Bot_Map. v34+ preserves manual review edits and provisions unmatched
     // members before the report is calculated.
     await syncMembers(client, cohort);
-    const data = await appsScriptGet(cohort, {
-      action: 'attendance',
-      guildId: cohort.guildId,
-    }, {
-      label: 'Attendance report',
-      timeoutMs: 180000,
-    });
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: cohort.timezone });
+    const historic = requestedDate && requestedDate !== today;
+    const raw = await appsScriptGet(cohort, historic ? {
+      action: 'attendanceaudit', date: requestedDate, guildId: cohort.guildId,
+    } : {
+      action: 'attendance', guildId: cohort.guildId,
+    }, { label: 'Attendance report', timeoutMs: 180000 });
+    const data = historic ? {
+      ...raw,
+      present: raw.presentStudents || [],
+      leave: raw.leaveStudents || [],
+      absent: raw.notPresentStudents || [],
+      avgMood: null,
+      interviewsToday: [],
+    } : raw;
 
     const channel = await client.channels.fetch(await resolveChannel(cohort, 'channel_attendance', cohort.channels.discussion));
 
@@ -525,7 +719,7 @@ async function postAttendance(client, cohort) {
       );
       for (const chunk of chunkLines([
         `⚠️ **Attendance identity review — ${data.date}**`,
-        'These submissions could not be matched uniquely. No student was guessed; correct the response or Bot_Map identity, then run `!attendance` again.',
+        'These submissions were rejected because they did not match one active roster identity. No student was guessed; the affected student remains absent unless another valid response or manual P/L mark exists.',
         ...issueLines,
       ], 1900)) {
         await admin.send({ content: chunk, allowedMentions: { parse: [] } });
@@ -538,7 +732,7 @@ async function postAttendance(client, cohort) {
       );
       for (const chunk of chunkLines([
         `⚠️ **Attendance date review — ${data.date}**`,
-        'These response rows have non-empty dates the bot could not parse. They were not counted.',
+        'These rows have missing/corrupt immutable Google Form Timestamps, so their calendar day cannot be proven. Editable student-selected dates never override the Timestamp.',
         ...dateLines,
         ...(data.invalidDateRows.length > dateLines.length
           ? [`…and ${data.invalidDateRows.length - dateLines.length} more`] : []),
@@ -564,15 +758,20 @@ async function postAttendance(client, cohort) {
       await admin.send({ content: lines.join('\n'), allowedMentions: { parse: [] } });
     }
 
-    // A response that cannot be dated or tied to exactly one student makes an
-    // absent list unsafe. Stop privately instead of publicly accusing anyone.
-    if (data.identityIssues?.length || data.invalidDateRows?.length) {
+    const responsePolicy = attendanceResponsePolicy(data);
+    // Never interpret a backend's deliberately empty blocked lists as everyone
+    // present. v55 blocks only missing/corrupt immutable timestamps; an older
+    // backend may also block an unmatched email and must be upgraded first.
+    if (responsePolicy.backendBlocked) {
       const admin = await client.channels.fetch(cohort.channels.supervisor);
+      const reason = responsePolicy.blockReason === 'invalid-timestamps'
+        ? 'One or more immutable Google Form Timestamps are missing or corrupt. Correct the response-sheet Timestamp evidence, then rerun `!attendance`.'
+        : 'This Apps Script deployment still uses the older all-or-nothing email policy. Deploy backend v55, then run `!attendance` again.';
       await admin.send({
-        content: '⛔ **Public attendance report stopped.** Resolve the unmatched/invalid response rows above, then run `!attendance` again. No student was pinged as absent.',
+        content: `⛔ **Public attendance report stopped.** ${reason} No student was pinged as absent.`,
         allowedMentions: { parse: [] },
       });
-      return { posted: false, date: data.date, reason: 'unsafe-response-rows' };
+      return { posted: false, date: data.date, reason: responsePolicy.blockReason || 'legacy-backend-blocked' };
     }
 
     const currentRoster = await getRoster(cohort);
@@ -585,6 +784,19 @@ async function postAttendance(client, cohort) {
         content: `ℹ️ Attendance excluded **${reconciled.excludedCount}** already-inactive, hired, left, protected, or supervisor record(s) before publishing.`,
         allowedMentions: { parse: [] },
       });
+    }
+
+    const collisions = conflictingAttendanceIdentities({ absent, present, leave });
+    if (collisions.length) {
+      const admin = await client.channels.fetch(cohort.channels.supervisor);
+      const lines = [
+        '⛔ **Public attendance update stopped — duplicate identity review required.**',
+        'A present/approved-leave account and an absent account have the same normalized name. The bot did not guess or ping either account. Mark the duplicate account inactive, then run `!attendance` to edit the existing report.',
+        ...collisions.map(item =>
+          `• ${item.present.name}: present/leave ID \`${item.present.discordId || 'missing'}\` · absent ID \`${item.absent.discordId || 'missing'}\``),
+      ];
+      await admin.send({ content: lines.join('\n').slice(0, 1900), allowedMentions: { parse: [] } });
+      return { posted: false, date: data.date, reason: 'duplicate-identity-review' };
     }
 
     // ---------- 1) SUMMARY EMBED ----------
@@ -609,38 +821,19 @@ async function postAttendance(client, cohort) {
       ],
       timestamp: new Date().toISOString(),
     };
-    await channel.send({ embeds: [embed] });
+    const publication = await publishAttendance(client, cohort, channel, {
+      date: data.date,
+      title: embed.title,
+      payload: embed,
+    }, attendanceSegments(absent, data.date));
 
-    // ---------- 2) ABSENT MENTIONS (plain text = real pings) ----------
-    if (absent.length === 0) {
-      await channel.send('🎉 **Everyone submitted attendance today. Outstanding!**');
-      return { posted: true, date: data.date, absent: 0 };
-    }
-
-    const lines = absent.map(s => {
-      const tag = s.discordId ? `<@${s.discordId}>` : `**${s.name}**`;
-      let line = `❌ ${tag}`;
-      if (s.history && s.history.total > 0) {
-        line += ` — missed ${s.history.missed} of last ${s.history.total} sessions`;
-        if (s.history.streak >= 3) line += ` 🔴 ${s.history.streak} in a row`;
-      }
-      return line;
-    });
-
-    const chunks = chunkLines(
-      [`@everyone\n📢 **Absent today — please submit your attendance daily:**`, ...lines],
-      1900
-    );
-    for (const chunk of chunks) {
-      await channel.send({
-        content: chunk,
-        allowedMentions: { parse: ['users', 'everyone'] }, // make sure pings actually fire
-      });
-      await sleep(1200); // gentle pacing, avoids rate limits
-    }
-
-    console.log(`[attendance] ${cohort.name} posted for ${data.date} (${absent.length} absent)`);
-    return { posted: true, date: data.date, absent: absent.length };
+    console.log(`[attendance] ${cohort.name} ${publication.updated ? 'updated' : 'posted'} for ${data.date} (${absent.length} absent)`);
+    return {
+      posted: true,
+      updated: publication.updated,
+      date: data.date,
+      absent: absent.length,
+    };
   } catch (err) {
     console.error(`[attendance] ${cohort.name} failed:`, err.message);
     const admin = await client.channels.fetch(cohort.channels.supervisor).catch(() => null);
@@ -692,5 +885,10 @@ module.exports = {
   postAttendance,
   markPosted,
   attendanceIdentityKey,
+  attendanceNameKey,
+  conflictingAttendanceIdentities,
+  attendanceResponsePolicy,
+  attendanceSegments,
+  parseAttendancePublication,
   reconcileAttendanceRoster,
 };

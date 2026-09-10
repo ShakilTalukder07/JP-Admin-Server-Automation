@@ -1,6 +1,6 @@
 # JP ADMIN — EJP Mentorship Bot Documentation
 
-**Version:** v3.30 (bot) / v48 expected by `!doctor` (Apps Script) · **Updated:** August 2026
+**Version:** v3.33 (bot) / v59 expected by `!doctor` (Apps Script; frozen EJP-13 remains v55) · **Updated:** September 2026
 **Stack:** Node.js (discord.js) on Render Free · Google Sheets + Apps Script (database, API, and scheduled wake-up) · Groq AI (llama-3.3-70b)
 
 ---
@@ -26,7 +26,7 @@
 | Region directory with WhatsApp + resume links                                                                 | #bot-admin                            | on command                    |
 | In-memory activity report (done / failed)                                                                      | #bot-admin                            | manual `!dailyreport`         |
 | Resources preservation + repost in new servers                                                                | #resources                            | 11 AM (1/day)                 |
-| Private onboarding, rules acceptance, max-six identity teams, and readiness roles                            | #welcome-to-the-bootcamp              | on join/member interaction    |
+| Private role profile, rules acceptance, independent location/availability/work-mode/English/skill roles       | #welcome-to-the-bootcamp              | on join/intake/member interaction |
 
 **Design principles:** Sheets is the durable database (restart-proof) · current Discord membership is the active-student source · `All Data` and Forms provide identity/contact information but never activate a student by themselves · supervisors are excluded everywhere by ID · any non-white identity row in `Bot_Map` or `Attendance` is inactive · `hired`/`left` status skips a student everywhere · empty question categories auto-refill via AI · discussion carries only important announcements.
 
@@ -34,7 +34,7 @@
 
 ## 2. Right-To-Be-Referred Score (rolling 7 days)
 
-Top scorers get **first access to mentor-special job referrals**. RTBR is shown in the Thursday weekly performance leaderboard and announced separately at 8 PM in #right-to-be-referred; fully auditable in the Sheet. Use `!schedule rtbr thu` once on cohorts that previously saved a Friday override.
+Top scorers get **first access to mentor-special job referrals** and the visible `Right to Be Referred` role. The weekly run removes the role from members who are no longer in the configured top quantity. Use `!rtbr top 10`, `!rtbr days 7`, `!rtbr time 20:00`, and `!schedule rtbr thu` to configure it.
 
 | Component           | Points                                                              |
 | ------------------- | ------------------------------------------------------------------- |
@@ -91,8 +91,21 @@ catalog. If a required value is missing or two controls could match, it asks
 one short question; reply directly to that bot message in plain English within
 five minutes. It suggests the final command for review but never runs it.
 
-**Setup:** `!setup` (private four-step beginner guide) · `!setupserver` (channels + discovery + intros + 3-day warm-up) · `!ensurechannels` (missing channels + permissions only; no reposts/warm-up reset) · `!repairpermissions` (overwrite-only retry) · `!supervisor list|add @user|remove @user` (server-local durable supervisor access) · `!announceall` · `!editannouncement <message link>` (private editor for pinned bot rules/intros) · `!checkperms`
-**Onboarding:** `!onboardingpanel` · `!onboardingstatus` · `!onboardingreminder [#channel]` · `!onboardingrepair` · `!completioncheck` · `!completionreminder` · `!finalizegroups` · `!setrulesmessage <link>` · `!resetonboarding @member` · `!groupactivities setup|sync|status`
+**Setup:** `/setup` or `!setup` (private four-step beginner guide; self-hosted server owner is the permanent recovery supervisor) · `!setupserver` (channels + discovery + intros + 3-day warm-up) · `!ensurechannels` (missing channels + permissions only; no reposts/warm-up reset) · `!repairpermissions` (overwrite-only retry) · `!supervisor list|add @user|remove @user` (server-local durable supervisor access, including signed-capsule persistence for self-hosting) · `!announceall` · `!editannouncement <message link>` (private editor for pinned bot rules/intros) · `!checkperms`
+**Onboarding:** `!onboardingpanel` · `!onboardingstatus` · `!onboardingreminder [#channel]` · `!rolerepair [#channel]` (`!onboardingrepair` alias) · `!completioncheck` · `!completionreminder` · `!setrulesmessage <link>` · `!resetonboarding @member` · `!groupactivities setup|sync|status`
+
+The intake and Discord fallback create independent roles rather than fruit
+teams: one `Division · ...`; one `Dhaka Area · ...` only for Dhaka; one each for
+availability, work mode, and English level; and every honestly selected
+`Skill · ...`. Outside-Dhaka members are not asked for an area. Re-submitting
+the OAuth intake updates mutable profile answers and roles without creating a
+duplicate student. Run `!rolerepair #discussion` after migration or manual role
+edits. It processes members sequentially, mentions only students still missing
+role-profile data, and makes one restart-safe follow-up after two hours.
+
+Discord does not expose per-message read receipts to bots for mentor or bot
+messages. Delivery, reactions, and button clicks can be observed, but none is a
+reliable silent “seen” list; JP ADMIN therefore does not claim one.
 **Identity:** pre-entry `!intake status|enable [slug]|disable|link` · automatic private join profile fallback (name, real email, phone, region, area) · `!syncmembers` · `!missingdata` / `!studentsurvey incomplete` (private dashboard/DM surveys) · `!studentsurvey attention [days] [send]` (incomplete plus no applications; preview before explicit send) · `!profilecheck` (refresh and verify all current members/profile coverage) · `!profilesurvey #channel` (mention incomplete students; answers stay private and Discord-ID-bound) · `!editprofile @student|DiscordID` (immediate supervisor correction with historical identity migration; raw ID avoids a ping) · `!studentstatus @student active|inactive` (activation/inactivation is atomic and verified across Discord, Bot_Map, Attendance, exclusions, metadata, warnings, and mutually exclusive status roles) · `!statusroles` · `!accessrules list|defaults|apply|allow|deny|remove` · `!studentstatuspanel` (active/inactive/protected counts and separate tap-to-manage lists) · `!activestudents [page N]` · `!inactivestudents` (private dated inactive list with individual/date/all activation controls; status changes require confirmation) · `!notapplying [days N]` · `!synchiredroles` · `!audit` · `!addstudent <email> @user` · `!students [region] [sub]` · `!studentreport` (private one/all/severe-needs-attention picker; every flagged student shows the reason; WhatsApp preview cards are suppressed)
 
 For clearer access commands, `!accessrules block @role #channel` denies viewing
@@ -111,19 +124,19 @@ STRIDE data-collection fields. OAuth supplies the immutable username, and the
 portal keeps its own rules commitment instead of duplicating the old manual
 Discord questions.
 **Forms/Attendance:** `!setupcohortsheet [Sheet URL]` · `!setupcohortsheet cleanup confirm` · `!setupcohortsheet fresh confirm [Sheet URL]` · `!formtemplate` (show/add/edit/remove/move/help/title/description/collectemail/validate/restorecore/save/load/list/delete/reset) · `!createforms attendance [name]` (portal cohorts) · `!createforms <name>` (legacy two-Form mode) · `!designforms <description>` · `!forms` · `!forms use <number|id>` · `!forms link <edit URL|id>` · `!openform` · `!closeform` (closes + posts) · `!closeform silent` (closes only) · `!formstatus` · `!attendance` · private `!checkattendance [YYYY-MM-DD]` / `!repairattendance` · private `!checkpipelines [YYYY-MM-DD] [all]` / `!repairpipelines` · private `!absent [current|previous|YYYY-MM-DD|july week 1]` · `!setupsheets existing` / `!setupsheets empty confirm` · `!arrangesheets`
-Attendance uses the freshly synchronized guild roster at both Apps Script and Discord publication boundaries. Students already inactive before the report are absent from its total and mentions; a student deactivated by the warning run after today's report appears today once and is excluded afterward.
-**Outreach/Jobs/Interviews:** `!backfilloutreach` and `!backfillinterviews` import immutable message-ID history · `!outreachcheck` · `!backfilljobsheets` · `!jobscheck` (student-facing and pings; exact dated counts or clearly labeled new-row estimates) · `!checkjobsheets [YYYY-MM-DD]` (slow read-only audit across bounded public tabs, private contacts, no pings/writes). Historical backfills survive a temporary roster-write 404 by using the last durable roster and clearly reporting that fallback. Every job check also reconciles the latest 1,000 channel messages first. Interview and outreach history silently reconcile every calendar day at 22:50 by default, including holidays/weekends; this repair sends no public report.
+Attendance uses the freshly synchronized guild roster at both Apps Script and Discord publication boundaries. Students already inactive before the report are absent from its total and mentions; a student deactivated by the warning run after today's report appears today once and is excluded afterward. The immutable Google Form Timestamp controls the attendance day even when the editable date answer is wrong. An unmatched or ambiguous email is privately rejected, counts as no attendance, and leaves that student absent without blocking the valid cohort report; a missing/corrupt immutable Timestamp still stops safely.
+**Outreach/Jobs/Interviews:** `!backfilloutreach [N days]`, `!backfillinterviews [N days]`, and `!backfilljobsheets [N days]` default to the latest **3 cohort calendar days** and accept **1-30 days** (for example, `!backfilloutreach 7 days`). They stop reading when Discord history reaches an older date and never clear or overwrite older durable events. Outreach/interview IDs remain idempotent; jobs saves only the newest tracker link in the selected window and does not change older daily counts. `!outreachcheck` · `!jobscheck [YYYY-MM-DD]` (student-facing and pings; optional date recovers a missed run) · `!checkjobsheets [YYYY-MM-DD]` (private, no pings/writes). Every job check automatically reconciles the same recent three-day window first. Interview and outreach history silently reconcile the same window every calendar day at 22:50, including holidays/weekends.
 **Activity follow-up:** `!activityprompt outreach|interview|communication|all` · `!activitycheck attendance|jobs|interviews|all`
 **Private mailer:** `!mailer status|enable|disable|quota` · `!mailer to|cc|bcc <emails|none>` · `!mailer replyto|sender|mentor|phone <value>` · `!mailer template|preview absent|warning1|warning2|inactive` · `!mailer send absent|warnings|all [YYYY-MM-DD]`. The reusable sender default is **Job Placement — Programming Hero**, and `solih@programming-hero.com` is always included in CC; `cc none` removes only additional CC addresses. Students are always BCC-only. Gmail hides BCC from received copies; inspect the Apps Script sender account's **Sent** copy or the bot-admin TSV/`Mailer_Log` audit. The confirmation reconciles the full Attendance absence total against eligible, already-inactive/excluded, invalid-email, duplicate-email, and unresolved rows, and attaches a private TSV with every recipient or skipped reason. Automatic mail waits until the attendance warning classification finishes; warning recipients do not also receive the absence email.
 
 **Manual selected announcements:** `!followup <dawnjoin|jobsheet|profile|attendance|interview|jobs|outreach|dawn|communication|workshop> [days N] [#channel]`. The bot first builds a private no-ping preview; only the initiating supervisor can confirm. This sends once and never replaces or changes automated announcements/reports.
 
-**Leave:** students run `!leave` in `#issues` and submit dates/reason privately. Requests and decisions run one at a time per cohort; a duplicate pending submission does not create another mentor card. Mentors use `!leaves` or the bot-admin buttons to approve, adjust, or reject and must add a mentor note. Status plus note is posted in `#issues` mentioning that student; private reason/contact stays in bot-admin. Approved working dates show `L`; only blank/`A` counts absent.
+**Leave:** students run `!leave` in `#issues` and submit dates/reason privately. Requests and decisions run one at a time per cohort; a duplicate pending submission does not create another mentor card. Mentors use `!openleaves` (or `!leaves`) for one private oldest-first manager with Previous/Refresh/Next, then approve, adjust, or reject and add the required mentor note. Status plus note is posted in `#issues` mentioning that student; private reason/contact stays in bot-admin. Approved working dates show `L`; only blank/`A` counts absent.
 
 **Warnings and appeals:** `!warnings @student` · `!warnings reset @student` · `!warnings start YYYY-MM-DD` · `!warningreport` · `!appeals [all]` · `!appeal approve|decline <request-id> | note`. The start command gives every student one inclusive baseline, rebases recorded evidence, repairs only unfair warning-driven inactivity, and posts a correction. One run can add only one warning. Warning three means three distinct two-date incidents (six counted absence dates), marks the student inactive, stops all attendance/activity/RTBR/leaderboard credit until mentor reactivation, and posts an appeal button in the eliminated-students channel. The Thursday private warning report has a 30-minute recovery window and a durable duplicate guard. Dawn removal is scope-specific, is announced with an appeal in `#emergency`, and cannot be bypassed by reusing the normal Dawn join form; mentor approval restores the Dawn role and posts a student-facing decision notice. The select menus, buttons, and modals work in Discord mobile. Discord does not support a bot-defined pre-join popup, so inactive rejoiners receive a DM or channel fallback.
 **Questions:** `!questions` (clickable scheduler + channel picker) · `!questions channel #channel` · `!questions amounts <morning> <afternoon> <evening>` · `!dropquestion [cat] [workshop|discussion]` · `!genquestions <cat> <n>` · `!leaderboard` · `!weeklyreport` · `!rtbr` · `!replanquestions`
 **Targets:** `!targets` · `!target applications 10` · the same command supports `outreach`, `attendance`, `interviews`, `communication`, and `workshops`
-**Automation control:** `!control` · `!automation list|start|stop <key|all>` · `!times` · `!time jobs 22:30` · `!schedule jobs sun-thu` · `!calendar` (private date selector) · `!calendar week sun-thu | context` · `!calendar holiday|working YYYY-MM-DD | context` · advanced `!settings` / `!set <key> <value>`
+**Automation control:** `!control` · `!automation list|start|stop <key|all>` · `!automation starter` for a quiet new cohort · `!times` · `!time jobs 22:30` · `!schedule jobs sun-thu` · `!calendar` (private date selector) · `!calendar week sun-thu | context` · `!calendar holiday|working YYYY-MM-DD | context` · advanced `!settings` / `!set <key> <value>`
 **Workshop:** `!workshop` / `!specialworkshop` (private controls) · `!workshopannounce` (confirmation request) · `!workshoppoll`
 **Forwarder:** in `#bot-admin`, `!forwarder status|start|stop` · `!forwarder set <srcId> <dstId>` (live validation; route changes stay OFF until started; temporary failures show WAITING and retry without erasing ON intent)
 **Reusable content:** `!contentsync source <server-id|control>` · `!contentsync run resources|jobhunting one|all` · `!contentsync auto resources|jobhunting on|off`
@@ -179,7 +192,7 @@ Render restart.
 | 9:00 PM                | "Form not open?" reminder                                             | bot-admin             |
 | ~10 PM                 | You: `!closeform` → attendance posts (@everyone + mentions + history) | discussion            |
 | 10:30 PM               | Exhaustive daily-application check; individually mentions every active student and shows dated today, total tracker rows, new rows, and recent history | job-tracking-sheet |
-| 10:50 PM daily         | Silent idempotent interview + outreach history reconciliation (including holidays/weekends) | internal; failures only in bot-admin |
+| 10:50 PM daily         | Silent idempotent interview + outreach reconciliation for the latest three cohort calendar days (including holidays/weekends) | internal; failures only in bot-admin |
 
 Attendance-warning and application-emergency messages expose only Discord
 mentions publicly. The same run sends a copyable Name/Email/Phone/Reason TSV,
@@ -202,7 +215,7 @@ and `!set rtbrtop`.
 
 **Rule of thumb: invite the bot with Administrator — all permission hassle disappears.**
 
-1. **Google:** create a Sheet → paste local backend v54 → CONFIG:
+1. **Google:** create a Sheet → paste local backend v59 → CONFIG:
    cohort name, blank FORM_ID if the bot creates Forms, new private SECRET_KEY
    → Deploy →
    **New deployment** → Web app → Execute as Me → **Anyone** → copy `/exec`
@@ -257,6 +270,9 @@ cohorts. `BOT_ACTIVE_WINDOW=04:50-23:30` is the startup fallback. Private
 windows, repeating weekdays or exact dates, and date overrides. The one
 `Render-Uptime-Monitor.gs` trigger reads that schedule and wakes the single
 Render URL ten minutes early.
+Use `!backend override YYYY-MM-DD[,YYYY-MM-DD] always` for temporary 24-hour
+dates, or replace `always` with one to four `HH:MM-HH:MM` windows. The normal
+schedule resumes automatically after those dates.
 Students should submit bot-tracked channel updates only inside that window. Old per-service or
 always-on monitors must remain paused.
 

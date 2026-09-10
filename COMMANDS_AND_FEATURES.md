@@ -9,7 +9,7 @@ events. Unless a row explicitly says otherwise, commands are supervisor-only.
 | Command | Module | Scope | Effect |
 | --- | --- | --- | --- |
 | `!setupserver` | `setup-command.js` | Configured supervisor | Reuses/creates standard channels, repairs permissions, discovers IDs, posts introductions, begins warm-up, and prepares rules/onboarding. |
-| `!setup` / `!setup guide` | `self-hosted-setup.js` | Server administrator during first self-hosted run; afterward a configured supervisor in private `#bot-admin` | Opens a four-step button guide for Apps Script authorization, safe existing-channel matching, Discord-primary roster sync, and verification. Self-hosted first run persists only a signed non-secret setup capsule. Managed deployments also expose the existing Add cohort flow. |
+| `/setup` or `!setup` / `!setup guide` | `self-hosted-setup.js` | Server owner or administrator during first self-hosted run; afterward a configured supervisor in private `#bot-admin` | Opens a four-step button guide for Apps Script authorization, safe existing-channel matching, Discord-primary roster sync, and verification. The slash command avoids first-run dependence on Message Content Intent. The server owner is always a permanent recovery supervisor. Self-hosted first run persists only a signed non-secret setup capsule. Managed deployments also expose the existing Add cohort flow. |
 | `!ensurechannels` | `setup-command.js` | Configured supervisor in any channel | Reuses/creates only missing standard channels, repairs private/locked overwrites, and refreshes discovery without reposting introductions or changing the warm-up date. Useful for a live cohort whose template is missing a newly required channel. |
 | `!repairpermissions` | `setup-command.js` | Configured supervisor in `#bot-admin` | Repairs private/locked standard channel overwrites without recreating channels, reposting introductions, or resetting warm-up. |
 | `!announceall` | `announce.js` | Supervisor | Posts/pins all standard introductions and mirrors them to the automation log. |
@@ -25,6 +25,7 @@ events. Unless a row explicitly says otherwise, commands are supervisor-only.
 | `!backend windows <HH:MM-HH:MM[,HH:MM-HH:MM...]>` | `backend-control.js` | Saves one to four daily Render/Discord active windows, immediately reconciles the current connection, and ensures exactly one five-minute Apps Script monitor trigger. |
 | `!backend days everyday\|weekdays\|mon,wed,...` | `backend-control.js` | Chooses repeating active weekdays and exits exact-date mode. `weekdays` means Sunday through Thursday. |
 | `!backend dates <YYYY-MM-DD,...>\|clear` / `!backend date <YYYY-MM-DD> on\|off\|clear` | `backend-control.js` | Runs only on listed dates, returns to recurring days, or applies/removes one date-specific override. |
+| `!backend override <YYYY-MM-DD[,YYYY-MM-DD...]> always\|HH:MM-HH:MM[,..]\|off\|clear` | `backend-control.js` | Applies a self-expiring full-day or custom-window exception to only those dates. The regular schedule resumes automatically afterward. |
 | `!supervisor [list]` / `!supervisor add @user-or-ID` / `!supervisor remove @user-or-ID` | `cohort-manager.js` | Private, server-local supervisor management in that cohort’s `#bot-admin`. Add accepts a current member or preconfigures an absent person's raw Discord ID, saves the durable registry, repairs private/locked permissions when present, and excludes the ID from student tracking. Remove revokes standard overwrites and resyncs a remaining guild member as a normal Discord student; self-removal is blocked. |
 | `!groqstatus` | `groqstatus.js` | Supervisor | Shows configured Groq keys and observed quota. |
 
@@ -35,17 +36,21 @@ These commands must be run in the configured supervisor channel.
 | Command | Module | Effect |
 | --- | --- | --- |
 | `!onboardingpanel` | `onboarding.js` | Creates or refreshes the pinned persistent welcome panel and rules link. |
-| `!onboardingstatus` | `onboarding.js` | Shows completion, division/location, readiness, missing members, and availability-review list without displaying gender. |
+| `!onboardingstatus` | `onboarding.js` | Separately shows complete-with-rules, ready role profiles, rules-only pending members, genuinely missing role data, division/readiness, and availability review without displaying gender. |
+| `!restorerolesfromintake @student\|DiscordID\|all` | `onboarding.js`, Apps Script v59 | Privately reloads the latest structured Intake Responses row for selected current student(s), persists its validated onboarding profile, and reconciles all managed roles. Stored lowercase semantic field tags are mapped back to canonical role fields before validation. It never prints private answers or touches members outside the command guild. |
 | `!onboardingreminder [#channel]` | `onboarding.js` | Mentions only current members whose private onboarding is incomplete, in `#discussion` by default or a selected same-server text channel. It posts only the rules/onboarding buttons and never displays private answers. |
-| `!onboardingrepair` | `onboarding.js` | Reapplies identity and readiness roles from saved private answers, reports remaining gaps privately, and runs the normal majority-safe final rebalance where eligible. |
+| `!rolerepair [#channel]` | `onboarding.js` | Sequentially reconciles independent division, Dhaka-area, availability, work-mode, English, and multi-skill roles. Legacy fruit assignments are removed from members but no role/data is deleted. Missing students are mentioned in the selected channel (discussion by default) with a private form and one durable two-hour follow-up. |
+| `!onboardingrepair` | `onboarding.js` | Compatibility alias for `!rolerepair`. |
 | `!completioncheck` | `onboarding.js` | Syncs the current Discord roster, then privately lists the union of students missing private onboarding and/or required profile fields. No public ping. |
 | `!completionreminder` | `onboarding.js` | Runs the same combined check and posts buttons in the configured welcome channel while mentioning only the incomplete current students. Profile and onboarding forms remain private. |
-| `!finalizegroups` | `onboarding.js` | Rebalances all completed members into final same-division teams of at most six. |
+| `!finalizegroups` | `onboarding.js` | Retired compatibility command that directs mentors to `!rolerepair`. |
 | `!setrulesmessage <Discord message link>` | `onboarding.js` | Selects an existing message in this server's configured rules channel and refreshes the panel link. |
 | `!resetonboarding @member` | `onboarding.js` | Deletes one stored response record and removes bot-managed identity/readiness roles. |
 
-Member-facing onboarding is not a prefix command. A join greeting or persistent
-panel opens an ephemeral four-select questionnaire plus explicit rules acceptance.
+Member-facing onboarding is not a prefix command. A complete authenticated
+intake assigns the roles and skips the fallback questionnaire; the delayed join
+greeting asks only for explicit rules acceptance. Missing intake role fields
+still open the private paged fallback questionnaire.
 New non-bot, non-supervisor members also receive the five-field private contact
 form in DM. The welcome panel contains **Complete my private profile** as a
 fallback. Submitting it creates or repairs `All Data`, `Bot_Map`, `Roster Review`,
@@ -75,9 +80,11 @@ The English-only default retains every non-Discord field from the STRIDE data
 collection Form. OAuth supplies the username instead of asking students to type
 it; the portal keeps its own pre-entry rules commitment without duplicating the
 old "already joined" question.
-Built-in division, gender preference, availability, and study-stage answers
-prefill the private onboarding record after admission; rules acceptance remains
-an explicit Discord action before identity/readiness roles are applied.
+Built-in division, conditional Dhaka area, availability, job preference,
+English rating, and multi-select technologies prefill the role profile after
+admission. OAuth-bound resubmission updates mutable profile/role data and starts
+role reconciliation immediately. Rules acceptance remains an explicit Discord
+action; private gender/study answers are never exposed as roles.
 
 ## Identity, roster, and engagement
 
@@ -135,10 +142,10 @@ an explicit Discord action before identity/readiness roles are applied.
 | `!forms use <number-or-form-id>` | `forms.js` | Switches the active attendance form. |
 | `!forms link <edit-url-or-form-id>` | `forms.js` | Activates an existing attendance Form even when no linked forms are listed; a linked response tab is detected automatically. |
 | `!openform` | `formcontrol.js` | Opens only the current Discord server's active attendance form through that cohort's backend. |
-| `!closeform` | `formcontrol.js` | Closes only the current server's active form and posts that cohort's attendance after 30 seconds. |
+| `!closeform` | `formcontrol.js` | Closes the current server's active form and posts or edits that date's attendance after 30 seconds. |
 | `!closeform silent` | `formcontrol.js` | Closes only the current server's active form and confirms privately without posting or scheduling an attendance report. |
 | `!formstatus` | `formcontrol.js` | Shows only the current server's active form open/closed state. |
-| `!attendance` | `attendance.js` | Posts attendance immediately for testing/manual operation. |
+| `!attendance [YYYY-MM-DD]` | `attendance.js` | Rechecks today or a requested previous date and edits that date's durable public report without repeating notifications. Unmatched/ambiguous email identities are privately rejected and remain absent without blocking valid students; same-name present/absent account collisions still fail closed. |
 | `!checkattendance [YYYY-MM-DD]` | `attendance.js` | Private read-only readiness report. Attendance day always comes from the immutable Google Form `Timestamp`; the editable attendance-date answer never controls counting. The audit lists timestamp/date corrections, duplicate submissions, identity issues, matrix P values, and copyable contacts. It never pings students. |
 | `!repairattendance` | `attendance.js` | Adds every active Discord-linked Bot_Map student to Attendance and refreshes Name/Email/Phone without changing date columns, P/L values, or the dedicated mentor-editable Remarks column. |
 | `!checkpipelines [YYYY-MM-DD] [all]` | `attendance.js` | Private combined audit of Discord identity, color activity, Attendance, job tracker links/saved counts, outreach events, and interview events. It lists problems by default; `all` includes every active student. A broken attendance response tab is reported without hiding the other pipelines. |
@@ -154,7 +161,10 @@ an explicit Discord action before identity/readiness roles are applied.
 Attendance identity matching prefers a normalized email or Discord ID, then a
 unique Discord username, then a unique normalized student-name alias (including
 common `Md`/`Mst` prefixes and Discord decoration). An ambiguous or unmatched
-answer is never guessed; it is reported privately in `#bot-admin`.
+answer is never guessed; it is reported privately in `#bot-admin`, does not
+count as present, and does not block the report. The immutable Form Timestamp
+controls the day even when the editable date answer is wrong; only a
+missing/corrupt immutable Timestamp stops the run.
 `!attendance` also reconciles every active Discord-linked student into the
 Attendance matrix before marking matched P values. An intentionally colored
 Email identity cell in `Bot_Map` or `Attendance` makes the row inactive and
@@ -177,13 +187,13 @@ absence command counts recorded session columns rather than calendar days.
 | Command/event | Module | Effect |
 | --- | --- | --- |
 | Message in configured `#outreach-update` / `#outreach-updates` | `outreach.js` | Logs the roster member's outreach activity; the `channel_outreach` runtime override wins for both live logging and history backfill. |
-| `!backfilloutreach` | `outreach.js` | Imports bounded outreach history into the backend. Each Discord message ID is stored idempotently in `Outreach_Daily`, so retries cannot inflate counts, and affected matrix dates are recomputed. A transient optional roster-refresh failure falls back to the last durable roster and is disclosed in the completion reply. |
+| `!backfilloutreach [N days]` | `outreach.js` | Reconciles the latest three cohort calendar days by default; 1-30 days select an explicit inclusive window. Pagination stops at the first older date. Each in-window Discord message ID is idempotent; older events are neither scanned nor overwritten. |
 | `!outreachcheck` | `outreach.js` | Runs the stale/never-outreached report immediately. |
-| Successful outreach/job/interview write | Apps Script v48 | Keeps all three activity matrices synchronized with their durable logs. Bot writes are serialized per cohort and long idempotent activity/roster writes use a three-minute timeout. Outreach retries and interview history backfills repair downstream views by immutable message identity. Active job/outreach rows below 10 total over the latest three recorded dates turn light red; inactive rows in all matrices are dark red until mentor activation. |
+| Successful outreach/job/interview write | Apps Script v59 | Keeps all three activity matrices synchronized with their durable logs. Bot writes are serialized per cohort and long idempotent activity/roster writes use a three-minute timeout. Outreach retries and interview history backfills repair downstream views by immutable message identity. Active job/outreach rows below 10 total over the latest three recorded dates turn light red; inactive rows in all matrices are dark red until mentor activation. |
 
 | Tracker link in `#job-tracking-sheet` | `jobs.js` | Stores the member's latest Sheet ID and selected tab `gid`. A link without `gid` is explicitly acknowledged as using the default/first visible tab and appears as `DEFAULT` in `Job_Sheets`. If the immediate backend write exhausts transient retries, the durable Discord message is reconciled automatically from recent history before the next job check; the student is not asked to repost. |
-| `!backfilljobsheets` | `jobs.js` | Scans bounded channel history and saves discovered tracker links. A transient optional roster-refresh failure does not discard the import: existing durable students are processed and the reply asks for a later rerun to capture brand-new unmatched members. |
-| `!jobscheck` | `jobs.js` | Runs the student-facing target check, individually mentions every active mapped member (never `@everyone`), and saves one authoritative count per tracker for the cohort date. Each line shows the dated-today count, total application rows, and independent new-row delta since the previous successful check. Normal date columns are exact; recognizable date-less tables use the new-row delta from a durable nightly baseline and are labeled estimated. |
+| `!backfilljobsheets [N days]` | `jobs.js` | Scans the latest three cohort calendar days by default, or an explicit 1-30-day window, and saves the newest in-window tracker link per student. Pagination stops at the first older date; existing daily job history is untouched. |
+| `!jobscheck [YYYY-MM-DD]` | `jobs.js` | Runs the student-facing target check for today or an explicitly requested missed date and saves one authoritative dated count per tracker. Future dates are rejected. |
 | `!checkjobsheets [YYYY-MM-DD]` | `jobs.js` | Slow private read-only audit for the requested cohort date. It fresh-reads up to 30 public tabs per tracker, reports the selected table's total application rows and requested-date count, preserves every explicitly submitted `gid`, includes phone/WhatsApp without preview cards, reports unsafe/invalid dates, chunks safely, and performs no student pings or score/count writes. |
 | `!activityprompt outreach\|interview\|communication\|all` | `activity-automation.js` | Manually posts the selected student-facing 06:00 template with controlled `@everyone`. |
 | `!activitycheck attendance [YYYY-MM-DD]\|jobs\|interviews\|all` | `activity-automation.js` | Manually runs the absence, two-workday job-target, or Thursday interview follow-up logic and returns an explicit private result, including zero-new-incident success. The optional date applies only to attendance and defaults to the current cohort date. Attendance/job checks also post a copyable name/email/phone/reason TSV only in that cohort's private `#bot-admin`. |
@@ -195,10 +205,10 @@ absence command counts recorded session columns rather than calendar days.
 | Inactive panel mail | `inactive-controls.js`, `mailer.js` | `!inactivestudents` can preview and confirm the configured inactive email for one selected inactive student or the complete current inactive list. Gmail does not reveal BCC recipients in the mentor's received copy; the private confirmation and `Mailer_Log` counts provide the audit. |
 | `!followup <type> [days N] [#channel]` | `followup.js` | Builds a no-ping private preview for Dawn join, tracker/profile, attendance, interview, jobs, outreach, Dawn, communication, or workshop gaps. Preview rows use plain student names, while the confirmed announcement uses real mentions. Only the initiating supervisor can confirm. This is a one-off manual announcement and never changes scheduled automation. Recipients are intersected with live guild membership. |
 | `!leave` | `leave.js` | Student command in `#issues`; opens a private date/reason modal. The public channel never receives the reason. |
-| `!leaves` / `!leave approve\|reject <request-id> \| note` | `leave.js` | Serialized private bot-admin pending list and decision fallback. Duplicate pending submissions/cards and repeat notifications are suppressed. Buttons support adjusting dates; all outcomes require a mentor note and post status to that student in `#issues`. Approved working dates become `L`; rejected requests never alter Attendance. |
+| `!openleaves` / `!leaves` / `!leave approve\|reject <request-id> \| note` | `leave.js` | Opens one serialized private bot-admin manager, oldest request first, with Previous/Refresh/Next and approve/adjust/reject controls. It no longer floods the channel with one card per pending request. Duplicate submissions and repeat notifications are suppressed. All outcomes require a mentor note and post status to that student in `#issues`. Approved working dates become `L`; rejected requests never alter Attendance. |
 | `!studentreport` | `student-reports.js` | Private interactive picker for one student, all active students, or severe needs-attention cases; the latter includes only zero applications, below-half scheduled applications, or zero attendance and prints each reason. Includes seven-day metrics, contact details without WhatsApp preview cards, and serialized interview history for the selected student. |
 | Student post/edit in interview channel | `interview.js` / `interview-parser.js` | Deterministically bulk-upserts structured single or multiple interview announcements even if AI is unavailable. Immutable Discord message ID + event index prevents duplicate Sheet rows/replies from embed updates, retries, overlapping handlers, and real edits. |
-| `!backfillinterviews` | `interview.js` | Private bounded history scan that recognizes official combined-field and concise faced-interview updates, bulk-reconciles immutable message events, and rebuilds `Interview Updates` from `Interview_Log`. |
+| `!backfillinterviews [N days]` | `interview.js` | Private scan of the latest three cohort calendar days by default, or an explicit 1-30-day window. It stops at the first older date and bulk-reconciles only in-window immutable events; existing older `Interview_Log` events remain untouched. |
 | Current-roster preflight | `attendance.js`, `jobs.js`, `outreach.js`, `interview.js` | Student-facing attendance/job/outreach runs refresh Discord membership before reading the roster. An unknown current tracker/outreach/interview poster triggers one immediate refresh and retry. A failed report preflight aborts visibly in `#bot-admin` instead of publishing a partial member list. |
 | Roster refresh coordination | `roster.js` | Concurrent callers in one guild share one refresh, and a successful refresh is reusable for 60 seconds. Explicit `!syncmembers` forces a new refresh. This reduces duplicate Apps Script executions without weakening report preflights. |
 | Supervisor mention in hired channel | `hired.js` | Marks the student hired, colors Sheet rows, excludes the member from active checks, and assigns the Discord Hired role. A delayed idempotent startup sync repairs existing hired members after deployment. |
@@ -221,7 +231,8 @@ absence command counts recorded session columns rather than calendar days.
 | `!workshopannounce` | `workshop.js` | Creates a private confirmation card; it never posts the public schedule without a supervisor button click. |
 | `!workshoppoll` | `workshop.js` | Opens a manual attendance poll. |
 | `!repairinterviews` | `interview.js` | Private exact-duplicate repair for Interview_Log; preserves distinct multi-interview events and rebuilds per-student serials. |
-| `!rtbr` | `rtbr.js` | From `#bot-admin`, posts the rolling Priority for Referral / Right-To-Be-Referred board and confirms the result privately. |
+| `!rtbr` | `rtbr.js` | From `#bot-admin`, posts the rolling board and reconciles `Right to Be Referred` membership for the qualified top students. Missing Discord identities leave existing role membership unchanged. |
+| `!rtbr top <1-25>` / `!rtbr days <1-90>` / `!rtbr time HH:MM` | `rtbr.js` | Changes the qualified-role quantity, scoring window, or weekly execution time immediately for this cohort. |
 | `!match <job description>` | `match.js` | Extracts requirements and ranks up to five suitable candidates. |
 | `!suggest` | `suggest.js` | Drafts one activity; supervisor checkmark approval posts it. |
 | `!dmnudges` | `dm-nudges.js` | Sends personalized bot DMs to eligible lagging members now. |
@@ -234,6 +245,7 @@ absence command counts recorded session columns rather than calendar days.
 | `!control` / `!automationconfig` | `control-center.js` | Private one-place snapshot of this cohort's switches, targets, clock times, scheduled days, and exact control/student/cohort command shortcuts. Its Command Center button opens the searchable catalog without duplicating command definitions. |
 | `!automation [list]` | `automations.js` | Shows persistent automation switches. |
 | `!automation start|stop <key|all>` | `automations.js` | Changes switches and invalidates the local cache immediately. Background refresh is deliberately less frequent to protect Apps Script quota. |
+| `!automation starter` | `automations.js` / `channel-visibility.js` | Applies the quiet new-cohort preset and hides only held outreach, interview, communication, RTBR, and Dawn workflow channels from students. Core channels stay visible; starting a related automation reveals its channel again. |
 | `!settings` | `settings.js` | Lists default/current settings. |
 | `!set <key> <value>` | `settings.js` | Persists one valid target, time, URL, slot, or channel override. |
 | `!targets` | `settings.js` | Shows the six cohort performance goals and whether each is daily or weekly. |
@@ -288,7 +300,7 @@ shown by `!times`, and `channel_attendance`,
 | `!dawn window [always\|HH:MM-HH:MM]` | `dawn-discipline.js` | Shows or sets when role members can send. Default is always open. This is independent of attendance. |
 | `!dawn attendance [HH:MM-HH:MM]` | `dawn-discipline.js` | Shows or changes the exact same-day attendance scan window (default 05:00–07:00). The review time must remain later than the window end. |
 | `!dawn add\|remove @student` | `dawn-discipline.js` | Supervisor override for one member's Dawn Focus role. |
-| `!groupactivities setup\|sync\|status` | `group-activities.js` | Creates/reuses `#group-activities`; each populated `Bootcamp · Division · Fruit` identity role receives a private thread whose membership is synchronized from that role. Readiness roles are excluded. |
+| `!groupactivities setup\|sync\|status` | `group-activities.js` | Creates/reuses `#group-activities`; each populated `Division · ...` role receives a private thread whose membership is synchronized from that role. Availability, work-mode, English and skill roles are excluded. |
 | `!forwarder [status]` | `forwarder.js` | In private `#bot-admin`, shows OFF, ON, WAITING, or UNKNOWN and performs a live source/destination access check. A temporary lookup/access failure does not erase durable ON intent. |
 | `!forwarder set <source-id> <destination-id>` | `forwarder.js` | Validates and persists a route whose source belongs to this cohort and whose destination is visible/sendable by the same bot. Route changes leave forwarding OFF. |
 | `!forwarder start|stop` | `forwarder.js` | Enables/disables real-time forwarding; start refuses an inaccessible route. An enabled route retries every five minutes and again on matching source posts. |
@@ -327,7 +339,7 @@ secondary metric; daily application/outreach goals must be at least one.
 | Attendance/warning mailer | `formcontrol.js`, `activity-automation.js`, `mailer.js` | After the ten-minute warning classification; durable and idempotent across restart/retry | Opt-in `mailer` switch independent of the warning switch/day override. Warning 1/2/3 groups supersede ordinary absence for that date; inactive students are not mailed again on later dates. Private previews reconcile the Attendance total and attach eligible/skipped address details without exposing them publicly. |
 | Two-day application-target emergency | `activity-automation.js` | Every working day at 08:10 | `jobemergency` switch + warm-up. It checks the two preceding working days; approved leave is excused. Holidays are skipped. |
 | Interview follow-up | `activity-automation.js` | Thursday 08:20 and 19:00 | `escalations` + `interviewfollowup` switch/day schedule + warm-up |
-| Interview + outreach history reconciliation | `activity-reconciliation.js` | 22:50 every calendar day by default | Silent maintenance, including Friday/Saturday and holidays; setting `activityreconciletime`; no student-facing report or automation-switch dependency |
+| Interview + outreach history reconciliation | `activity-reconciliation.js` | 22:50 every calendar day by default | Silent three-calendar-day maintenance window, including Friday/Saturday and holidays; pagination stops before older messages; no student-facing report or automation-switch dependency |
 | Dawn Focus repair/prompt/review | `dawn-discipline.js` | 04:50 stale-overwrite repair / 05:00 prompt / 07:10 review, Sunday–Thursday | `discipline` switch + day schedule; configurable attendance window defaults 05:00–07:00; no per-message Sheet calls; channel sending window is independent |
 | Historical content backfill | `content-sync.js` | 10:00 Sun–Thu, one item/kind | `contentsync` switch + day schedule + destination opt-in |
 | Job application accountability | `jobs.js` | 22:30 | `jobs` switch + day schedule + warm-up |

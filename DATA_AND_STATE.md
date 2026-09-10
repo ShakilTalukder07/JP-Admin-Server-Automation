@@ -1,7 +1,7 @@
 # Data, Environment, and State Contracts
 
 The complete Apps Script source is stored in `Code-v19-FINAL.gs`; its internal
-backend version is now `v48`. This document records the contract shared by that
+backend version is now `v56`. This document records the contract shared by that
 backend and all bot callers. If an action or response changes, update both sides,
 the contract tests, and the deployed Apps Script Web App version.
 
@@ -165,13 +165,18 @@ base channel map.
 - POST sends JSON with `{ key, action, ...payload }` and follows redirects.
 - Core callers use `apps-script-api.js`. GETs and explicitly idempotent writes
   use up to five paced attempts when Google returns a transient HTML 404/5xx,
-  timeout, or network error. Retry URLs carry harmless cache-busting query
-  parameters to avoid a stale Google edge response. Non-idempotent writes are
+  timeout, network error, or a recognized temporary Apps Script JSON failure
+  such as Script Lock contention. Timeout/lock retries include a 15-second
+  remote-completion grace because aborting the HTTP wait does not cancel an
+  Apps Script execution. One isolated `unauthorized` response is confirmed
+  through the same bounded five attempts on safe requests; a persistent wrong
+  key still stops after that sequence.
+  Retry URLs carry harmless cache-busting parameters. Non-idempotent writes are
   never retried by default.
 - Callers expect JSON. A persistent HTML/DOCTYPE or `Unexpected token '<'`
   usually means a stale deployment, incorrect Web App access setting, or an
   archived/wrong `/exec` URL; a one-off occurrence can be a Google edge error.
-- `doctor.js` currently expects backend health version `v48`.
+- `doctor.js` expects backend health version `v56`, except the intentionally frozen closing EJP-13 backend at v55.
 - API executions open the explicitly stored `JP_SPREADSHEET_ID`; they do not
   depend on an active editor spreadsheet in Web App requests.
 - Enrollment and attendance response-tab names are stored separately so copied
@@ -189,7 +194,7 @@ base channel map.
 | `formstatus` | attendance/form control/doctor | Active form ID/title/link and accepting state. |
 | `openform` | `formcontrol.js` | Opens active form and returns link/status. |
 | `closeform` | `formcontrol.js` | Closes active form. |
-| `attendance` | attendance/reporter | Present/absent/history/interview summary. History uses only recorded matrix dates on or before the report date, merges duplicate rows/date columns, and honors updated P/L marks. Same-day duplicate Form submissions use the latest answer; an explicit “No interview faced today” confirmation vetoes a contradictory Yes. |
+| `attendance` | attendance/reporter | Present/absent/history/interview summary. The immutable Form Timestamp controls the date; a wrong editable date is audit-only. Unmatched/ambiguous identities are rejected as non-attendance and remain absent without blocking other students. A missing/corrupt immutable Timestamp still stops safely. History uses only recorded matrix dates on or before the report date, merges duplicate rows/date columns, and honors updated P/L marks. Same-day duplicate Form submissions use the latest answer; an explicit “No interview faced today” confirmation vetoes a contradictory Yes. |
 | `attendanceaudit` | `attendance.js` | Private, non-posting audit for one date: Discord-review linkage, active Bot_Map students, Attendance row readiness/duplicates, response identity matches, and invalid dates. |
 | `pipelineaudit` | `attendance.js` | Private combined health view for Discord identity/color activity, Attendance, job tracker links/daily counts, outreach events, and interview events. It returns contact data only to the authorized bot-admin command. |
 | `absences` | `attendance.js` | Private date-bounded active-student absence records with phone/username, recorded-session count, longest streak, and absent dates. Accepts `start`, `end`, and guild ID for manual exclusions. |
@@ -199,7 +204,7 @@ base channel map.
 | `rtbr` | RTBR/DM/engagement/match/suggest/reporter/weekly report | Rolling combined student scores/components plus raw application/interview/workshop counts. Native Sheet dates are normalized before range checks. Callers pass the guild's validated `jobTarget`; missing/invalid values retain the legacy 15 default. |
 | `studentinfo` | students/engagement/match | Enriched identity/contact/location/resume/project information. |
 | `performance` | weekly-report/student-reports/followup | Date-bounded jobs, attendance, interviews, outreach, per-date application/outreach values, approved leave dates, communication/question, and workshop metrics; optional private interview history and phone data. Attendance counts each student/date once even when duplicate matrix rows or date columns exist. |
-| `leaverequests` | `leave.js` | Pending/decided private requests for supervisor review. |
+| `leaverequests` | `leave.js` | Pending/decided private requests for the one-message `!openleaves` supervisor manager. |
 | `leavecalendar` | Attendance/Dawn checks | Students with approved `L` on one date; used to suppress false absence/target penalties. |
 | `dawnabsences` | `followup.js` | Date-bounded Dawn `A` records with approved leave excluded. |
 | `appeals` | `appeals.js` | Pending or recent private bootcamp/Dawn appeal records for the current cohort. |
@@ -230,8 +235,8 @@ base channel map.
 | `fillLocations` | `locations.js` | Source tab/column selection. |
 | `logOutreach` | `outreach.js` | One Discord outreach event plus guild/message ID/source URL. Message-ID replay is idempotent and recoverable: a retry reconciles the durable event into both summary and matrix views after a partial/timed-out request. |
 | `backfillOutreach` | `outreach.js` | Batched historical outreach entries. |
-| `backfillOutreachDaily` | `outreach.js` | Reconciles bounded Discord outreach events into `Outreach_Daily` by immutable message ID, attaches IDs to compatible legacy rows, then rebuilds affected summaries and matrix dates even when every input was already stored. |
-| `backfillInterviews` | `interview.js` | Bulk reconciles up to 100 parsed Discord messages by email + immutable message ID + event index, updates edited events, and rebuilds the complete `Interview Updates` matrix from `Interview_Log`. |
+| `backfillOutreachDaily` | `outreach.js` | Reconciles only messages inside the requested 1-30-day window (three days by default) into `Outreach_Daily` by immutable message ID, then rebuilds affected summaries/dates without deleting older events. The bot submits at most 25 events per locked call. |
+| `logInterviews` | `interview.js` | Live writes and bounded history reconciliation use the same per-message idempotent action. A requested 1-30-day window (three days by default) can add/repair only matching immutable message events and their dates without running a whole-history duplicate repair or changing older rows. |
 | `setupTrackingSheets` | `attendance.js` | `mode=existing` rebuilds `Jobs Applied`, `Outreach Update`, and `Interview Updates` from durable logs; `mode=empty` creates clean roster templates. Both preserve raw logs, pass the guild ID for exclusions, and refresh Attendance/status formatting. |
 | `arrangeSheetTabs` | `attendance.js` | Renames the configured active Form response tabs, then non-destructively orders/colors manual-review, active forms/reference, other Form-review, and bot-maintained groups. Unknown tabs remain visible and are not deleted. |
 | `setupCohortWorkbook` | `cohort-sheet-command.js` | Optionally binds a Sheet URL/ID, creates required tabs and the form trigger, or performs backup-first cleanup/fresh initialization with explicit confirmation. |
@@ -241,7 +246,7 @@ base channel map.
 | `mailerstatus` | `mailer.js` | Returns remaining Apps Script daily recipient quota plus a bounded recent batch summary. It never returns secrets or message bodies. |
 | `sendCohortEmailBatch` | `mailer.js` | Sends one validated plain-text group with students only in BCC. `Mailer_Log` reserves the guild/date/type/part batch key before Gmail draft-send, preventing retries from duplicating a sent/pending batch and recording the returned Gmail message ID. |
 | `submitStudentProfile` | `student-data-survey.js` | Private modal submission keyed by the current Discord member ID. Student submissions are rate-limited and fill only missing authoritative values; supervisor submissions from `!editprofile` are explicitly marked as authoritative corrections. A missing Roster Review row is created safely, hired/left status is preserved, onboarding division can fill a missing region, and a changed real/provisional email migrates operational identity/history. Active successful writes synchronize All Data, Bot_Map, Attendance, all three activity matrices, Job_Sheets, and Roster Review without returning private values. |
-| `submitIntakeApplication` | `intake-portal.js` | Idempotently writes one OAuth-bound application to `Intake Responses` and upserts its contact values into `All Data`. It deliberately does not activate Bot_Map or tracking rows. |
+| `submitIntakeApplication` | `intake-portal.js` | Idempotently writes one OAuth-bound application to `Intake Responses` and authoritatively updates its mutable contact/location values in `All Data` after Discord/email conflict checks. Dhaka area is conditional; outside-Dhaka profiles store no area. It deliberately does not activate Bot_Map or tracking rows. |
 | `updateIntakeApplicationStatus` | `intake-portal.js` | Marks the saved application synchronized or action-required without resubmitting answers. |
 | `recordProfileSurveyDeliveries` | `student-data-survey.js` | One batched delivery receipt write after DM attempts: `SENT`, `DM BLOCKED`, or `NOT IN SERVER`; completed profiles are never downgraded. For a brand-new join, it safely creates the incomplete Roster Review intake row without a full-roster Apps Script execution. |
 | `repairAttendanceRoster` | `attendance.js` | Adds/refreshes all active Discord-linked Bot_Map identities in Attendance while preserving every date mark and manual value. |
@@ -273,10 +278,11 @@ The backend `setState/getstate/getstates` facility is used as a key-value store.
 | `excl_<guildId>` | `exclude.js` / roster | Comma-separated Discord user IDs. |
 | `inactive_student_meta_v1_<guildId>` | `exclude.js`, `inactive-controls.js` | Per-student inactive date, source, reason, and recording timestamp for the private control panel. Existing warning timestamps are used only as a safe legacy fallback; unknown legacy dates are never invented. Verified activation removes the student's metadata. |
 | `warning_report_last_v1_<guildId>` | `warning-controls.js` | Last cohort-local date whose scheduled private warning report completed. It makes the 30-minute recovery window restart-safe and duplicate-safe. Manual `!warningreport` does not change this marker. |
-| `ob_<guildId>_user_<userId>` | `onboarding.js` | JSON private onboarding record. |
+| `ob_<guildId>_user_<userId>` | `onboarding.js` | JSON Discord-ID-keyed role profile: division, conditional Dhaka area, availability, work mode, English level, multiple skills, rules acceptance, and optional private placement answers. Authenticated intake resubmission updates mutable values. |
 | `ob_<guildId>_rules_message` | `onboarding.js` | Official rules Discord message ID. |
 | `ob_<guildId>_panel_message` | `onboarding.js` | Persistent welcome-panel message ID. |
-| `ob_<guildId>_finalized` | `onboarding.js` | `1` after a failure-free final grouping run. |
+| `ob_<guildId>_role_reminder_v1` | `onboarding.js` | One pending role-profile follow-up `{channelId,dueAt,createdAt}`. Startup restores the timer; completion or a clean repair clears it. |
+| `ob_<guildId>_finalized` | Legacy onboarding state | Historical fruit-team finalization marker retained for compatibility; new role profiles neither read nor write it during normal operation. |
 | `fwd_<hubGuildId>_enabled` | `forwarder.js` | `1` or `0` for the explicit forwarding hub. |
 | `fwd_<hubGuildId>_source` | `forwarder.js` | Source channel ID. |
 | `fwd_<hubGuildId>_dest` | `forwarder.js` | Destination channel ID. |

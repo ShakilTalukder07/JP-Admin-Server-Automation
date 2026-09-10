@@ -6,6 +6,8 @@ This repository is the safe self-hosted edition. Your copy runs with **your Disc
 
 No programming experience is required. Keep this page open and complete each checkpoint in order.
 
+**Prefer a printable guide?** Open or download the illustrated [JP ADMIN Self-Hosted Installation Guide (PDF)](output/pdf/JP-ADMIN-Self-Hosted-Installation-Guide.pdf). It provides the complete installation in 17 beginner-friendly pages with screenshots, success checkpoints, and a troubleshooting table.
+
 > **Safety promise:** setup reuses existing Discord channels before creating missing ones. It does not delete existing channels, messages, Sheet tabs, student rows, or tracker history. Current Discord students can be synchronized even if they never completed intake.
 
 ## What you need
@@ -49,11 +51,19 @@ The token is a password. If it is ever posted or committed, reset it immediately
 
 1. In the Discord Developer Portal open **Installation**.
 2. Enable **Guild Install**.
-3. Under Guild Install scopes include `bot`.
+3. Under **Guild Install scopes**, include **both** `bot` and `applications.commands`.
 4. Under permissions select **Administrator**.
 5. Copy/open the Discord-provided install link.
 6. Select the correct server and approve the invitation.
 7. In Discord open **Server Settings → Roles** and move the JP ADMIN bot role above the student identity, readiness, active/inactive, and hired roles it will manage.
+
+If the portal does not show a usable install link, open **OAuth2 → URL Generator**, tick both `bot` and `applications.commands`, tick **Administrator**, then open the generated URL. The equivalent URL shape is:
+
+```text
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=8&scope=bot%20applications.commands
+```
+
+Replace only `YOUR_APPLICATION_ID` with the public Application ID from **General Information**. Never put the bot token in a URL.
 
 ![Discord Guild Install settings](docs/screenshots/discord-administrator-install.png)
 
@@ -80,7 +90,7 @@ Render supports `plan: free` for web-service Blueprints. Free services can sleep
 
 ## Checkpoint 5 — open the private Discord setup assistant
 
-1. When the Render service is Live, send `!setup` in your Discord server.
+1. When the Render service is Live, type `/setup` in your Discord server and select the JP ADMIN command. `!setup` is a text-command fallback.
 2. JP ADMIN reuses an existing `#bot-admin` channel or creates it if missing.
 3. It repairs the channel so ordinary members cannot see it.
 4. Continue only in private `#bot-admin`.
@@ -94,7 +104,9 @@ The panel has four buttons:
 
 Use **Retry / refresh** after correcting a failed checkpoint. Repeating a failed setup step does not delete data.
 
-If `!setup` does not respond, verify Render is Live, both Discord intents are enabled, and the bot role has Administrator.
+The server owner is automatically saved as the permanent recovery supervisor. If another administrator starts setup, that administrator is added too. After the Google connection passes, the owner can appoint mentors in private `#bot-admin` with `!supervisor add @mentor`; list them with `!supervisor list`. The server owner cannot be removed, preventing a supervisor blackout.
+
+If `/setup` is missing, reinstall from the OAuth URL with **both** scopes. If `/setup` responds but setup fails, read its private error. If only `!setup` is silent, enable **Message Content Intent** and restart Render. Also verify Render is Live and the bot role has Administrator.
 
 ## Checkpoint 6 — install and authorize Apps Script
 
@@ -127,7 +139,7 @@ For later Apps Script updates, edit the existing Web App deployment to use a new
 
 ## Checkpoint 7 — complete the Discord buttons
 
-Return to private `#bot-admin`, send `!setup`, and complete the four buttons from left to right:
+Return to private `#bot-admin`, run `/setup` (or `!setup`), and complete the four buttons from left to right:
 
 1. **Google permissions** tests the Web App connection.
 2. **Match channels** reuses configured or recognized existing channels and creates only missing standard channels.
@@ -135,6 +147,27 @@ Return to private `#bot-admin`, send `!setup`, and complete the four buttons fro
 4. **Verify** checks the backend and protected-channel permissions.
 
 Finish with:
+
+```text
+!automation starter
+!automation
+!doctor
+!checkperms
+```
+
+`!automation starter` is the safe opening-day preset. It keeps quiet essentials
+(attendance, job tracking, and content sync) enabled while holding noisy
+programmes. Dedicated outreach, interview-update, workshop, RTBR, discipline,
+and group-activity channels are hidden from ordinary students until their
+matching automation is started. Core channels such as rules, welcome,
+discussion, resources, resume updates, job hunting, and mentor channels remain
+available. Existing channels and data are never deleted.
+
+Students admitted through the web intake receive their location, availability,
+work-mode, English, and skill roles from that submission. The bot asks them only
+to accept the rules; it shows the private onboarding questionnaire only when
+required intake role data is genuinely missing. A delayed backend write is
+rechecked automatically before the fallback is offered.
 
 ```text
 !checkperms
@@ -155,14 +188,28 @@ Daily essentials:
 | Health | `!doctor` | Private; no student ping |
 | Permissions | `!checkperms` | Private; no student ping |
 | Students | `!syncmembers` | Updates durable roster/tracking rows |
+| Profile roles | `!rolerepair [#channel]` | Repairs saved roles; mentions only students missing required role data |
 | Attendance | `!formstatus`, then `!openform` / `!closeform` | Open/close posts are student-facing |
 | Job trackers | `!checkjobsheets YYYY-MM-DD` | Private read-only audit; no ping/write |
 | Combined readiness | `!checkpipelines YYYY-MM-DD` | Private diagnostic |
-| Leave review | `!leaves` | Decisions notify only the requesting student |
+| Leave review | `!openleaves` | Decisions notify only the requesting student |
 | Weekly report | `!weeklyreport` | Posts the performance leaderboard |
 | Settings | `!control` | Private overview |
 
-All 139 commands are categorized in [`MENTOR_COMMAND_REFERENCE.md`](MENTOR_COMMAND_REFERENCE.md). The running bot's private `!help` command is the authoritative command center.
+Role profiles are independent: `Division · ...`, Dhaka-only `Dhaka Area · ...`,
+availability, work mode, English level, and one role per honestly selected skill.
+The web intake shows the required Dhaka-area question only after Dhaka is
+selected. Existing members can use the private Discord questionnaire when data
+is missing; `!rolerepair #discussion` processes saved answers sequentially and
+rementions only the remaining incomplete students once after two hours. It does
+not delete legacy roles, channels, messages, or Sheet data.
+
+Weekly RTBR qualification is also a role. Use `!rtbr top 10`, `!rtbr days 7`,
+and `!rtbr time 20:00` in private `#bot-admin`; the weekly run adds the role to
+the current qualifiers and removes it from members outside the configured top
+quantity.
+
+All 142 commands are categorized in [`MENTOR_COMMAND_REFERENCE.md`](MENTOR_COMMAND_REFERENCE.md). The running bot's private `!help` command is the authoritative command center.
 
 ## Updating your copy later
 
@@ -178,10 +225,14 @@ This public repository is a release source; your private repository owns your de
 | Symptom | Safe recovery |
 | --- | --- |
 | Bot offline | Check Render **Live**, `/health`, then Render logs |
+| Bot is online but `/setup` is missing | Reinstall with both `bot` and `applications.commands` scopes; wait up to one minute and reopen Discord |
+| `/setup` says you are not a supervisor | The Discord server owner must run `/setup`; owner access repairs itself, then use `!supervisor add @mentor` |
+| `!setup` is silent but `/setup` works | Enable Message Content Intent in the Developer Portal and restart Render |
 | Discord login error | Reset the Discord token and replace only `DISCORD_TOKEN` in Render |
 | `!setup` ignored | Enable both privileged intents and verify Administrator/role hierarchy |
 | Apps Script test fails | Verify `/exec`, **Anyone** access, and the matching secret |
 | Existing students missing | Enable Server Members Intent, then run `!syncmembers` privately |
+| Location/skill roles missing | Run `!doctor onboarding`, then `!rolerepair [#channel]`; move the bot role higher if assignment fails |
 | Attendance mismatch | `!checkattendance` → `!repairattendance` → recheck |
 | Job count mismatch | `!checkjobsheets <date>` and verify the tracker tab/date; never delete history |
 | Channel issue | `!checkperms` → `!repairpermissions`; do not delete channels |

@@ -29,7 +29,12 @@ for AI-generated questions, scoring, interview preparation, matching, form
 design, suggestions, and the command assistant.
 
 `keepalive.js` also delegates `/intake/...` requests to `intake-portal.js` while
-preserving `/` and `/health` for Render monitoring. The portal identifies the
+preserving `/` as process liveness and `/health` as Discord-aware readiness.
+`runtime-health.js` reports only secret-free state. Inside an active operating
+window, a missing Discord connection returns 503; outside the saved schedule it
+returns 200 as `scheduled_offline`. The gateway controller bounds stuck logins,
+resets failed sessions, retries, and requests one clean process restart after a
+prolonged unhealthy interval. The portal identifies the
 applicant through Discord OAuth, renders the cohort's current editable
 enrollment template, and saves one structured `Intake Responses` row before it
 uses Discord's `guilds.join` grant. Only after Discord admission succeeds does
@@ -42,9 +47,9 @@ The English-only default keeps the non-Discord STRIDE data-collection fields.
 The immutable OAuth username remains in the fixed Discord columns, while the
 portal's own rules commitment replaces the old pre-join Discord questions.
 When the working template contains the built-in private placement questions,
-their canonical gender/division/availability/study-stage values prefill the
-existing onboarding record after admission. The member still accepts the rules
-in Discord before the existing role assignment/finalization flow runs.
+its canonical profile values update the Discord-ID-keyed onboarding record
+after admission and immediately reconcile the non-private roles. The member
+still accepts the rules in Discord to finish onboarding.
 
 ## Process startup
 
@@ -194,9 +199,9 @@ checked during changes.
 | --- | --- | --- |
 | Configuration | `config.js`, `discover.js`, `channel-names.js` | Cohorts, channels, schedules/defaults, template matching |
 | Identity | `roster.js`, `discord-members.js`, `sync-command.js`, `missing.js`, `exclude.js`, `student-access.js` | Discord ↔ Sheet member mapping, eligibility, mutually exclusive status roles, and role/channel access rules |
-| External APIs | `groq.js`, `apps-script-api.js`, feature modules | AI queue/key rotation plus bounded, secret-safe Sheet Web App calls with five-attempt transient HTML/404 retry and cache-busted retry URLs |
+| External APIs | `groq.js`, `apps-script-api.js`, feature modules | AI queue/key rotation plus bounded, secret-safe Sheet Web App calls; reads/idempotent writes retry transient edge, network, timeout, and Apps Script lock failures, use a remote-completion grace after timeouts/locks, and confirm an isolated authentication rejection once |
 | Runtime control | `automations.js`, `settings.js`, `scheduler.js`, `runtime-schedule.js`, `control-center.js`, `help.js`, `state.js` | Persistent switches, targets, editable local clock times, day schedules, private overview, searchable command catalog, warm-up |
-| Reporting/health | `reporter.js`, `doctor.js`, `perms.js`, `keepalive.js` | Activity logging, diagnostics, permissions, Render health |
+| Reporting/health | `reporter.js`, `doctor.js`, `perms.js`, `keepalive.js`, `runtime-health.js` | Activity logging, diagnostics, permissions, process liveness, and Discord-aware Render readiness |
 | Pure logic | `job-tracker.js`, `message-chunks.js`, `onboarding-groups.js`, `dawn-attendance.js`, `channel-names.js`, `forwarder-route.js` | Testable parsing/distribution/normalization without Discord |
 
 ## Major feature flows
@@ -206,7 +211,7 @@ checked during changes.
 `roster.js` loads `Bot_Map` plus manual exclusions through one `action=roster`
 execution and caches them for ten minutes. Discord membership is the active
 roster source of truth. `!syncmembers` submits only current non-bot,
-non-supervisor members to Apps Script v48, which corroborates current or
+non-supervisor members to Apps Script v59, which corroborates current or
 archived Discord IDs, unique normalized names, `All Data`, and enrollment
 identity fields before rebuilding `Bot_Map`. `All Data` is the preferred
 contact/location source and `Bot_Map Archive` fills missing historical region
@@ -268,10 +273,13 @@ attendance result from Apps Script and posts a summary plus real absent mentions
 Scheduled reminders alert supervisors if the form state is not as expected.
 The backend resolves attendance through collected email, the configured answer,
 exact roster name, Discord username, or Discord ID. Ambiguous/unmatched answers
-are never guessed and are returned only for a private bot-admin review notice.
+are never guessed, never count as present, and are returned only for a private
+bot-admin review notice; they do not block the valid cohort report.
 Attendance form submissions themselves do not mutate the matrix. The immutable
 Google Forms `Timestamp` always determines the attendance day; the editable
-date answer is audit-only and can never move a response. The report
+date answer is audit-only and can never move a response. A missing/corrupt
+immutable Timestamp still fails closed because its calendar day cannot be
+proven. The report
 request performs one idempotent batch matrix reconciliation. Rolling history
 uses only recorded matrix dates on or before the report date and merges
 duplicate student/date cells with P/L precedence. The latest same-day Form
@@ -279,7 +287,7 @@ submission controls mood/interview summaries, and an explicit no-interview
 confirmation vetoes a contradictory Yes. The shared form trigger continues to
 process enrollment submissions.
 
-Apps Script v48 also exposes a private date-bounded absence report and
+Apps Script v59 also exposes a private date-bounded absence report and
 attendance roster/response audit. The Node
 side parses `current`, `previous`, a date, or month-week phrases such as
 `july week 1`, then renders contact-rich TSV only inside `#bot-admin`. After
@@ -290,7 +298,7 @@ three-or-more recorded-session absence runs from the current or previous week;
 Form definitions originate in `form-templates.js`. `cohort-admin.js` stores the
 working enrollment and attendance definitions separately in guild-namespaced
 Apps Script state and can copy them into named reusable pairs. Creation sends a
-validated definition to Apps Script v48, which supports text, paragraph,
+validated definition to Apps Script v59, which supports text, paragraph,
 choice, checkbox, scale, date, and time fields. Semantic field keys are saved
 with the created Forms so edited student-facing wording does not break roster
 or attendance header lookup.
@@ -353,7 +361,11 @@ rows and schemas without deleting activity history.
 `activity-reconciliation.js` runs one bounded, silent interview/outreach
 history repair at the configurable default 22:50 on every calendar day. It is
 separate from public reports, workday/holiday decisions, and feature switches;
-message IDs make repeated weekend and restart recovery safe.
+message IDs make repeated weekend and restart recovery safe. Manual and silent
+activity backfills default to three cohort calendar days and stop pagination at
+the first older message; supervisors may request 1-30 days explicitly. Outreach
+history is sent to Apps Script in batches of 25 so each locked execution remains
+well below the long-request timeout and does not create a retry/lock collision.
 `activity-automation.js` adds cohort-local Sun–Thu templates and evidence-based
 follow-up. Its automatic consecutive-attendance warning runs every working day;
 the two-working-day application escalation runs Monday and Wednesday, while manual
@@ -361,8 +373,9 @@ private command remains available any day. It refreshes the Discord-primary
 roster before warning, uses the backend's recorded attendance/application/interview facts, and posts only
 mentions/counts—never contacts or private Sheet rows. `dawn-discipline.js`
 uses approved leave from the cohort backend to prevent both Attendance and Dawn
-absence penalties. `leave.js` owns the private `#issues` request modal and
-serializes submissions and decisions per cohort. The Apps Script ledger is the
+absence penalties. `leave.js` owns the private `#issues` request modal and a
+single oldest-first `!openleaves` bot-admin manager, then serializes submissions
+and decisions per cohort. The Apps Script ledger is the
 idempotent integrity boundary: duplicate pending requests do not create a
 second bot-admin card, every decision requires a mentor note, and the result is
 posted in `#issues` mentioning only that student. Approvals write `L` through
@@ -518,23 +531,30 @@ role or `@everyone` cannot accidentally notify STRIDE members.
 
 ### Onboarding flow
 
-`onboarding.js` posts a public welcome and rules link but collects answers through
-ephemeral selects. Apps Script state persists gender preference, division,
-availability, study stage, acceptance, group, and completion timestamps.
+`onboarding.js` delays the per-member greeting so an OAuth intake write can
+finish first. A complete intake skips the fallback role questionnaire and asks
+only for rules acceptance; incomplete records keep the private fallback.
+Apps Script state persists division,
+conditional Dhaka area, availability, work mode, English level, multiple honest
+skills, rules acceptance, and any private placement answers supplied by intake.
 Bulk member lists use the shared rate-limit-aware `discord-members.js` cache;
 the onboarding serialization queue consumes both success and rejection paths
 so a Discord opcode-8 rate limit cannot terminate the process.
 
-After gender/division, a queued assignment gives a probable fruit team role.
-`onboarding-groups.js` owns the pure final distribution: same division, maximum
-six, and declared female/male separation where possible. Strict majority
-completion triggers finalization; completed late voters trigger rebalancing.
-Readiness roles are independent of identity roles.
+Every saved answer is serialized per guild and reconciled into independent
+`Division ·`, `Dhaka Area ·`, `Availability ·`, `Work Mode ·`, `English ·`, and
+multi-value `Skill ·` roles. The migration removes legacy `Bootcamp · ... ·
+Fruit` assignments from members without deleting role objects or history.
+Intake resubmission updates the same Discord-ID-keyed record and triggers the
+same reconciliation. A role sync missed while Discord is offline is marked
+pending and repaired with the explicit `!rolerepair` command; reconnect itself
+does not mutate an entire cohort. Only a pending two-hour reminder timer is
+restored at startup.
 
-`group-activities.js` consumes only these identity-region roles. It creates or
+`group-activities.js` consumes only populated `Division ·` roles. It creates or
 reuses `#group-activities` and one private thread per populated role, adding
 the role members individually because Discord private threads cannot directly
-grant membership to a role. Readiness roles are never used for these threads.
+grant membership to a role. Availability and skill roles are never used for these threads.
 
 ### New-server setup flow
 
@@ -542,7 +562,10 @@ grant membership to a role. Readiness roles are never used for these threads.
 aliases. It reuses recognized template text channels, repairs private/locked
 permissions, and creates only missing standard channels. It runs discovery,
 records the three-day warm-up, posts channel introductions, and establishes the
-rules message and persistent onboarding panel.
+rules message and persistent onboarding panel. `automations.js` applies the
+explicit starter preset during setup; `channel-visibility.js` changes only
+`ViewChannel` on dedicated held workflow channels and preserves core,
+supervisor, and bot access.
 
 ## Persistence model
 

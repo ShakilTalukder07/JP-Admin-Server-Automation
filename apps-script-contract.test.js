@@ -29,6 +29,7 @@ const EXPECTED_ACTIONS = [
   'saveProject', 'saveResources', 'saveResume', 'scores', 'setactiveform',
   'setState', 'setupCohortWorkbook', 'setupTrackingSheets', 'studentinfo',
   'submitStudentProfile', 'submitIntakeApplication', 'updateIntakeApplicationStatus',
+  'getIntakeRoleProfiles',
   'recordProfileSurveyDeliveries', 'repairAttendanceRoster',
   'repairActivityPipelines', 'repairInterviewDuplicates',
   'renderUptimeSchedule', 'setRenderUptimeSchedule',
@@ -38,9 +39,9 @@ const EXPECTED_ACTIONS = [
   'mailerstatus', 'sendCohortEmailBatch',
 ];
 
-test('Apps Script v54 source parses and exposes every bot API action', () => {
+test('Apps Script v59 source parses and exposes every bot API action', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.match(source, /const VERSION = 'v54'/);
+  assert.match(source, /const VERSION = 'v59'/);
   assert.match(source, /body\.action === 'saveDawnAttendance'/);
   assert.match(source, /body\.action === 'saveDawnMembershipEvent'/);
   assert.match(source, /body\.action === 'repairDawnAttendance'/);
@@ -102,6 +103,14 @@ test('backend preserves daily jobs while adding weekly metrics and serialized in
   assert.match(source, /excludedIds: excludedDiscordIds\(guildId\)/);
   assert.match(source, /function getActivityPipelineAudit\(/);
   assert.match(source, /function repairActivityPipelines\(/);
+});
+
+test('intake restoration maps normalized stored keys back to canonical role fields', () => {
+  const helper = extractFunction('getIntakeRoleProfiles');
+  assert.match(helper, /jobfocus: 'jobFocus'/);
+  assert.match(helper, /englishcommunication: 'englishCommunication'/);
+  assert.match(helper, /genderpreference: 'genderPreference'/);
+  assert.match(helper, /studystage: 'studyStage'/);
 });
 
 test('RTBR counts native Sheet Date cells and exposes raw activity beside points', () => {
@@ -501,6 +510,11 @@ test('attendance resolves roster identity aliases and excludes colored rows from
   assert.match(source, /function matrixPresentOnDate\(/);
   assert.match(source, /notPresentStudents: notPresentStudents/);
   assert.match(source, /unique name alias/);
+  const todayAttendance = extractFunction('getTodayAttendance');
+  assert.match(todayAttendance, /blockReason:\s*'invalid-timestamps'/);
+  assert.doesNotMatch(todayAttendance, /if \(analysis\.identityIssues\.length \|\|/);
+  assert.match(todayAttendance, /syncAttendanceMatrix\(today, presentSet, roster\)/);
+  assert.match(todayAttendance, /identityIssues:\s*analysis\.identityIssues/);
   assert.match(source, /s\.active === false/);
   assert.doesNotMatch(source, /function onFormSubmit\(e\) \{\s*Utilities\.sleep/);
   const submitFunction = source.match(/function onFormSubmit\(e\) \{[\s\S]*?\n\}/);

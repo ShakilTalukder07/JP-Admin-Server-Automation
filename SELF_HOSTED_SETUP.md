@@ -2,6 +2,8 @@
 
 This guide is for a mentor who has never created a Discord bot, used Render, or deployed Apps Script. Your copy is independent: it uses your Discord application, your Render service, your Google Sheet, and your Apps Script deployment. It does not connect to the STRIDE production bot or another mentor's data.
 
+For a printable, screenshot-backed walkthrough, use [`output/pdf/JP-ADMIN-Self-Hosted-Installation-Guide.pdf`](output/pdf/JP-ADMIN-Self-Hosted-Installation-Guide.pdf). It follows the same safe sequence and includes a final completion card.
+
 Setup never deletes an existing Discord channel, message history, Google Sheet tab, or student record. JP ADMIN matches existing channel names first and creates only missing standard channels. The first roster sync includes existing non-bot, non-supervisor server members even if they never completed intake.
 
 ## Before you start
@@ -26,12 +28,18 @@ Keep passwords private. A Discord bot token and the Render value named `COHORT_A
    - **Server Members Intent**
    - **Message Content Intent**
 5. Open **OAuth2 → URL Generator**.
-6. Under **Scopes**, select **bot**. Under **Bot Permissions**, select **Administrator**.
+6. Under **Scopes**, select **both `bot` and `applications.commands`**. Under **Bot Permissions**, select **Administrator**.
 7. Open the generated link, choose the correct server, and approve the invitation.
 
 ![Discord Developer Portal application list](docs/screenshots/discord-developer-login.png)
 
-On the current Discord portal, **Installation** can create the Discord-provided invite link. Confirm **Guild Install**, add the `bot` scope, and set **Permissions** to **Administrator**.
+On the current Discord portal, **Installation** can create the Discord-provided invite link. Confirm **Guild Install**, add both `bot` and `applications.commands`, and set **Permissions** to **Administrator**. If the provided link is unavailable, use **OAuth2 → URL Generator** or replace only the public Application ID in this exact link:
+
+```text
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&permissions=8&scope=bot%20applications.commands
+```
+
+Never use the bot token in an invite URL. The server picker shows only servers where your Discord account can manage the server.
 
 ![Discord application installation settings](docs/screenshots/discord-administrator-install.png)
 
@@ -85,12 +93,14 @@ The Blueprint generates `COHORT_API_KEY` for you and starts in safe installer mo
 
 ## Part 4 — start the private Discord guide
 
-1. In any channel where you can type, send `!setup`.
+1. In any channel where you can type, run `/setup` and select the JP ADMIN command. `!setup` remains a fallback.
 2. JP ADMIN reuses an existing channel named `bot-admin` if present. Otherwise it creates one.
-3. It repairs `#bot-admin` so `@everyone` cannot view it and you plus the bot can use it.
+3. It repairs `#bot-admin` so `@everyone` cannot view it and the server owner, initiating administrator, and bot can use it.
 4. Continue only in `#bot-admin`. Use the numbered buttons from left to right.
 
-If `!setup` does nothing, check that the bot is online, both privileged intents are enabled, and its server role has Administrator. Restart the Render service after changing Discord intents.
+The Discord server owner is always saved as the permanent recovery supervisor—even if another administrator begins setup or an older saved package omitted the owner. After the backend test succeeds, add other mentors in private `#bot-admin` with `!supervisor add @mentor`; confirm with `!supervisor list`. The owner cannot be removed, so the bot cannot become administratively inaccessible.
+
+If `/setup` is not listed, the bot was installed without `applications.commands`: repeat Part 1 with both scopes, wait up to one minute, and reopen Discord. If `!setup` alone is silent, enable Message Content Intent and restart Render. `/setup` remains usable even when that text-command intent is wrong.
 
 ## Part 5 — copy and authorize the Google backend
 
@@ -118,7 +128,7 @@ Do not create a second Apps Script deployment just because setup is retried. For
 
 ## Part 6 — finish with the buttons
 
-Return to private `#bot-admin`, send `!setup`, and complete:
+Return to private `#bot-admin`, run `/setup` (or `!setup`), and complete:
 
 1. **Google permissions** → **Done — test connection**. This performs a read-only backend health check.
 2. **Match channels**. Existing configured or recognized channels are reused. Only missing channels are created. Private and announcement-only permissions are repaired.
@@ -128,12 +138,39 @@ Return to private `#bot-admin`, send `!setup`, and complete:
 Then run these private commands:
 
 ```text
+!automation starter
+!automation
 !checkperms
 !doctor
 !syncmembers
 ```
 
+The starter preset keeps attendance, job tracking, and content sync ready, but
+holds noisy student programmes until the mentor deliberately starts them. It
+also hides only their dedicated outreach, interview-update, workshop, RTBR,
+discipline, and group-activity channels from ordinary students. Core rules,
+welcome, discussion, resources, resume, job-hunting, and mentor channels remain
+visible. Starting a matching automation reveals its channel; stopping it hides
+that channel again. Nothing is deleted.
+
+A complete web-intake submission supplies the student's role profile, so the
+welcome flow asks only for rules acceptance. The private questionnaire is a
+fallback for missing required role fields, and the bot briefly rechecks slow
+backend writes before deciding it is needed.
+
 Diagnostics deliberately suppress mentions, so they do not ping students. Setup is complete when the required backend, permissions, roster, and schedules are healthy. Some optional `!doctor` items can remain disabled when you intentionally did not configure that feature, such as Groq.
+
+Before students arrive, also run `!doctor onboarding`. After existing students
+are present, use `!rolerepair #discussion` deliberately: it assigns independent
+division, Dhaka-area, availability, work-mode, English and honest multi-skill
+roles from saved intake data, then mentions only students whose required role
+data is missing. It repeats the reminder once after two hours for only those
+still incomplete. It never deletes old roles or data. A web-intake resubmission
+updates the student's existing Discord-linked profile and roles automatically.
+
+Configure weekly **Right to Be Referred** membership at any time in private
+`#bot-admin` with `!rtbr top <1-25>`, `!rtbr days <1-90>`, and
+`!rtbr time HH:MM`.
 
 Now open `MENTOR_OPERATIONS_GUIDE.md`. It explains how to start attendance and job tracking, operate the weekly reports, review leave requests, and avoid student pings during diagnostics. Use `MENTOR_COMMAND_REFERENCE.md` when you need the complete command list.
 
@@ -158,6 +195,9 @@ After the manager saves the cohort, JP ADMIN restarts and loads the durable regi
 - **Apps Script test fails:** confirm the Web App URL ends in `/exec`, deployment access is Anyone, and `CONFIG.SECRET_KEY` exactly matches Render's generated key.
 - **Duplicate-looking channels:** do not delete anything. Run `!ensurechannels`, inspect the result, and configure aliases/IDs only after identifying the intended channel.
 - **Existing students are missing:** ensure Server Members Intent is enabled, then run `!syncmembers` again in private `#bot-admin`.
+- **`/setup` is missing:** reinstall the bot using both OAuth scopes: `bot` and `applications.commands`.
+- **A mentor cannot use setup:** have the server owner run `/setup`, then add the mentor with `!supervisor add @mentor` in private `#bot-admin`.
+- **`!setup` is silent:** use `/setup`; then enable Message Content Intent and restart Render so all prefix commands work.
 
 ## What to share
 

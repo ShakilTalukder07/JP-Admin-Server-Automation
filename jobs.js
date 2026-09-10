@@ -2,7 +2,7 @@
 //  jobs.js - daily 15-applications accountability
 //   • students post their tracker Sheet link in #job-tracking-sheet
 //     -> bot saves it (latest link wins)
-//   • !backfilljobsheets - scan channel history for links
+//   • !backfilljobsheets [N days] - scan recent history for links (default 3)
 //   • 10:30 PM daily (+ !jobscheck) - read every non-hired
 //     student's public sheet, count today's applications,
 //     mention everyone below the daily target with today's
@@ -23,6 +23,12 @@ const { parseDateValue, parseSheetLink, readTracker } = require('./job-tracker')
 const { chunkLines } = require('./message-chunks');
 const { contactMarkdown } = require('./contact');
 const { appsScriptGet, appsScriptPost } = require('./apps-script-api');
+const {
+  historyWindow,
+  historyWindowLabel,
+  messageWindowPosition,
+  parseHistoryCommand,
+} = require('./history-window');
 
 async function post(cohort, body, tries = 5) {
   return appsScriptPost(cohort, body, {
@@ -39,6 +45,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function backfillJobSheetLinks(client, cohort, options = {}) {
   const maxPages = Math.max(1, Math.min(100, Number(options.maxPages || 100)));
+  const window = historyWindow(options.days, cohort.timezone, options.nowMs);
   const write = options.post || post;
   const pace = options.sleep || sleep;
   const parseLink = options.parseLink || parseSheetLink;
@@ -46,17 +53,22 @@ async function backfillJobSheetLinks(client, cohort, options = {}) {
     ? { roster: options.roster, refreshed: true, refreshWarning: '' }
     : await rosterForBackfill(client, cohort);
   const byId = new Map(rosterState.roster.map(student => [student.discordId, student]));
-  const channel = options.channel || await client.channels.fetch(cohort.channels.jobTracking);
+  const channelId = options.channel ? '' : await resolveChannel(cohort, 'channel_jobs', cohort.channels.jobTracking);
+  const channel = options.channel || await client.channels.fetch(channelId);
   const latest = new Map();
   let before;
   let loops = 0;
   let messages = 0;
+  let reachedBeforeWindow = false;
 
   while (loops < maxPages) {
     const batch = await channel.messages.fetch({ limit: 100, before });
     if (batch.size === 0) break;
-    messages += batch.size;
     for (const message of batch.values()) {
+      const position = messageWindowPosition(message, window);
+      if (position < 0) { reachedBeforeWindow = true; continue; }
+      if (position > 0) continue;
+      messages++;
       if (message.author.bot) continue;
       const tracker = parseLink(message.content);
       const student = byId.get(message.author.id);
@@ -65,6 +77,7 @@ async function backfillJobSheetLinks(client, cohort, options = {}) {
     }
     before = batch.last().id;
     loops++;
+    if (reachedBeforeWindow || batch.size < 100) break;
     await pace(400);
   }
 
@@ -77,11 +90,28 @@ async function backfillJobSheetLinks(client, cohort, options = {}) {
     candidates: items.length,
     messages,
     rosterRefreshed: rosterState.refreshed,
+    window,
   };
 }
 
 function dhakaDateStr(d, tz) {
   return d.toLocaleDateString('en-CA', { timeZone: tz }); // yyyy-mm-dd
+}
+
+function jobCheckDateKeys(targetDate, historyDays, timezone, now = new Date()) {
+  const requested = String(targetDate || '').trim();
+  const base = requested
+    ? new Date(`${requested}T12:00:00.000Z`)
+    : new Date(now);
+  if (Number.isNaN(base.getTime()) || (requested && base.toISOString().slice(0, 10) !== requested)) {
+    throw new Error('Job check date must be YYYY-MM-DD');
+  }
+  const keys = [];
+  for (let i = 0; i <= historyDays; i++) {
+    const date = new Date(base.getTime() - i * 86400000);
+    keys.push(requested ? date.toISOString().slice(0, 10) : dhakaDateStr(date, timezone));
+  }
+  return keys;
 }
 
 function formatDailyTrackerLine(result, dailyTarget, historyDays) {
@@ -103,7 +133,7 @@ function formatDailyTrackerLine(result, dailyTarget, historyDays) {
 // ============================================================
 //  Daily check
 // ============================================================
-async function runJobsCheck(client, cohort, manual = false) {
+async function runJobsCheck(client, cohort, manual = false, targetDate = '') {
   if (!manual && !(await isOn(cohort, 'jobs'))) { console.log(`[jobs] ${cohort.name}: automation OFF`); return; }
   if (!manual && !(await isScheduledToday(cohort, 'jobs'))) { console.log(`[jobs] ${cohort.name}: not scheduled today`); return; }
   if (await isWarmup(cohort)) { console.log(`[jobs] ${cohort.name}: warm-up - check skipped`); return; }
@@ -131,11 +161,7 @@ async function runJobsCheck(client, cohort, manual = false) {
       console.error(`[jobs] ${cohort.name}: recent tracker-link reconciliation failed:`, error.message);
     }
     // day keys: today + previous N days (Dhaka)
-    const dayKeys = [];
-    for (let i = 0; i <= cfg.historyDays; i++) {
-      const d = new Date(Date.now() - i * 86400000);
-      dayKeys.push(dhakaDateStr(d, cohort.timezone));
-    }
+    const dayKeys = jobCheckDateKeys(targetDate, cfg.historyDays, cohort.timezone);
     const [today, ...prevDays] = dayKeys;
     const bundle = await api(cohort, { action: 'jobaudit', date: today, guildId: cohort.guildId });
     if (bundle.error) throw new Error(bundle.error);
@@ -310,7 +336,7 @@ async function runJobsCheck(client, cohort, manual = false) {
     const admin = await client.channels.fetch(cohort.channels.supervisor).catch(() => null);
     if (admin?.isTextBased()) {
       await admin.send({
-        content: `❌ **Nightly job check stopped for ${cohort.name}:** ${String(err.message).slice(0, 300)}\nThe run was not declared complete; rerun \`!profilecheck\`, then \`!jobscheck\` after correcting the problem.`,
+        content: `❌ **Nightly job check stopped for ${cohort.name}:** ${String(err.message).slice(0, 300)}\nThe run was not declared complete; rerun \`!profilecheck\`, then \`!jobscheck${targetDate ? ` ${targetDate}` : ''}\` after correcting the problem.`,
         allowedMentions: { parse: [] },
       }).catch(() => {});
     }
@@ -503,7 +529,10 @@ module.exports = function registerJobs(client) {
 
     // ---- supervisor commands ----
     const isSheetAudit = lower === '!checkjobsheets' || lower.startsWith('!checkjobsheets ');
-    if (lower === '!jobscheck' || lower === '!backfilljobsheets' || isSheetAudit) {
+    const backfillCommand = parseHistoryCommand(lower, '!backfilljobsheets');
+    const isJobsCheck = lower === '!jobscheck' || lower.startsWith('!jobscheck ');
+    const jobsCheckMatch = lower.match(/^!jobscheck(?:\s+(\d{4}-\d{2}-\d{2}))?$/);
+    if (isJobsCheck || backfillCommand || isSheetAudit) {
       if (!cohort.supervisorIds.includes(msg.author.id)) return;
 
       if (isSheetAudit) {
@@ -520,20 +549,32 @@ module.exports = function registerJobs(client) {
         return;
       }
 
-      if (lower === '!jobscheck') {
-        await msg.reply('🔎 Reading every student tracker — this takes a minute for the whole cohort...');
-        await runJobsCheck(client, cohort, true);
+      if (isJobsCheck) {
+        if (!jobsCheckMatch) return msg.reply('Usage: `!jobscheck [YYYY-MM-DD]`.');
+        const requestedDate = jobsCheckMatch[1] || '';
+        let targetDate = '';
+        if (requestedDate) {
+          targetDate = parseDateValue(requestedDate, 'yyyy-mm-dd', cohort.timezone);
+          const today = dhakaDateStr(new Date(), cohort.timezone);
+          if (!targetDate || targetDate > today) {
+            return msg.reply('Usage: `!jobscheck [YYYY-MM-DD]` — the optional date cannot be in the future.');
+          }
+        }
+        await msg.reply(`🔎 Reading every student tracker for **${targetDate || 'today'}** — this takes a minute for the whole cohort...`);
+        await runJobsCheck(client, cohort, true, targetDate);
         return;
       }
 
-      // backfill: scan channel history for the latest link per student
-      await msg.reply('⏳ Scanning channel history for tracker links...');
+      if (backfillCommand.error) return msg.reply(backfillCommand.error);
+      const window = historyWindow(backfillCommand.days, cohort.timezone);
+      // backfill: scan only the selected recent history for the latest link per student
+      await msg.reply(`⏳ Scanning tracker-link messages from the last **${historyWindowLabel(window)}**...`);
       try {
-        const result = await backfillJobSheetLinks(client, cohort);
+        const result = await backfillJobSheetLinks(client, cohort, { days: backfillCommand.days });
         const refreshNote = result.rosterRefreshed
           ? ''
           : '\n⚠️ The live roster refresh hit a temporary backend error, so this run used the last durable roster. Existing students were imported safely; rerun later to capture any brand-new unmatched member.';
-        await msg.reply(`✅ Backfill done: **${result.saved}** student trackers saved from **${result.messages}** channel messages to Job_Sheets (one bulk request).${refreshNote}`);
+        await msg.reply(`✅ Backfill done for **${historyWindowLabel(result.window)}**: **${result.saved}** student trackers saved from **${result.messages}** channel messages to Job_Sheets (one bulk request).${refreshNote}`);
       } catch (err) {
         await msg.reply('❌ ' + err.message);
       }
@@ -577,3 +618,5 @@ module.exports = function registerJobs(client) {
 module.exports.formatDailyTrackerLine = formatDailyTrackerLine;
 module.exports.backfillJobSheetLinks = backfillJobSheetLinks;
 module.exports.runJobSheetAudit = runJobSheetAudit;
+module.exports.runJobsCheck = runJobsCheck;
+module.exports.jobCheckDateKeys = jobCheckDateKeys;
