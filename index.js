@@ -66,6 +66,7 @@ function registerClient(client) {
   require('./student-data-survey')(client);
   require('./cohort-sheet-command')(client);
   require('./hired')(client);
+  require('./eliminated')(client);
   require('./perms')(client);
   require('./formcontrol')(client);
   require('./outreach')(client);

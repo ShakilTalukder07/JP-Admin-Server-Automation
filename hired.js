@@ -8,6 +8,8 @@
 const { cohorts } = require('./config');
 const { getRoster, clearCache } = require('./roster');
 const { assignHiredRole } = require('./hired-role');
+const { extractStudentsFromMessage } = require('./student-mention');
+const { appsScriptPost } = require('./apps-script-api');
 
 module.exports = function registerHired(client) {
   client.once('clientReady', () => {
@@ -68,56 +70,53 @@ module.exports = function registerHired(client) {
     // channel permissions already restrict posting, this is a code-level backup
     if (!cohort.supervisorIds.includes(msg.author.id)) return;
 
-    if (msg.mentions.users.size === 0) return; // announcement text without mentions - ignore
-
     try {
       const roster = await getRoster(cohort, true);
-
-      const students = [], unknown = [];
-      for (const [id, user] of msg.mentions.users) {
-        const s = roster.find(r => r.discordId === id);
-        if (s) students.push(s);
-        else unknown.push(user.username);
-      }
+      const { students, unknownUsers, isAnnouncement } = extractStudentsFromMessage(msg, roster, cohort.supervisorIds);
 
       if (students.length === 0) {
-        if (unknown.length) {
-          await msg.reply(`⚠️ Not in the roster: ${unknown.join(', ')} — nothing marked.`);
+        // Safe @everyone handling - general announcements are ignored silently without error
+        if (isAnnouncement) return;
+        if (unknownUsers.length) {
+          await msg.reply(`⚠️ Not in the roster: ${unknownUsers.join(', ')} — nothing marked.`);
         }
         return;
       }
 
       // Tell the Sheet
-      const res = await fetch(cohort.appsScriptUrl, {
-        method: 'POST',
-        redirect: 'follow',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          key: cohort.apiKey,
-          action: 'markHired',
-          emails: students.map(s => s.email),
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await appsScriptPost(cohort, {
+        action: 'markHired',
+        emails: students.map(s => s.email).filter(Boolean),
+      }, { label: 'Mark hired' });
+      if (data?.error) throw new Error(data.error);
 
       clearCache(cohort); // so every module sees the new status immediately
 
+      const studentDiscordIds = students.map(s => s.discordId).filter(Boolean);
+
       let roleResult;
       try {
-        roleResult = await assignHiredRole(msg.guild, students.map(s => s.discordId));
+        roleResult = await assignHiredRole(msg.guild, studentDiscordIds);
       } catch (roleError) {
         roleResult = { assigned: [], already: [], missing: [], failed: [{ error: roleError.message }] };
       }
 
-      const lines = students.map(s => `🎉 **${s.name}** — congratulations on the new role!`);
+      // Reconcile status roles (remove Active Student role)
+      try {
+        const { syncStatusRolesForIds } = require('./student-access');
+        await syncStatusRolesForIds(client, cohort, studentDiscordIds, { forceRoster: true });
+      } catch (roleError) {
+        console.error('[hired] status role reconciliation failed:', roleError.message);
+      }
+
+      const lines = students.map(s => `🎉 **${s.name || s.displayName}** — congratulations on the new role!`);
       await msg.reply({
         embeds: [{
           title: `🏆 Hired — ${cohort.name}`,
           description: lines.join('\n'),
           color: 0x2ecc71,
           footer: {
-            text: `Marked hired and excluded from active checks. Discord role assigned: ${roleResult.assigned.length}; role issues: ${roleResult.missing.length + roleResult.failed.length}.`,
+            text: `Marked hired and sync turned off (excluded from attendance, tasks, outreach, and warning checks).`,
           },
         }],
       });
@@ -130,8 +129,8 @@ module.exports = function registerHired(client) {
         });
       }
 
-      if (unknown.length) {
-        await msg.channel.send(`⚠️ Also mentioned but not in roster (skipped): ${unknown.join(', ')}`);
+      if (unknownUsers.length) {
+        await msg.channel.send(`⚠️ Also mentioned but not in roster (skipped): ${unknownUsers.join(', ')}`);
       }
     } catch (err) {
       console.error('[hired] failed:', err.message);
@@ -139,3 +138,4 @@ module.exports = function registerHired(client) {
     }
   });
 };
+
