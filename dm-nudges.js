@@ -57,13 +57,7 @@ async function runNudges(client, cohort) {
       add(s.email, 'no outreach update recently — follow up with companies that have not replied, and send new outreach');
     }
 
-    const rec = getTodayWorkshopMisses(cohort);
-    const attended = rec ? rec.emails : new Set();
-    for (const s of roster) {
-      if (!isExcluded(cohort, s) && !attended.has(s.email)) {
-        add(s.email, 'missed all communication workshop sessions today — join at least one slot tomorrow');
-      }
-    }
+
 
     // job counts: use the most recent Jobs_Daily data via rtbr window of 1 day is not exposed;
     // simplest reliable signal: yesterday's saved counts

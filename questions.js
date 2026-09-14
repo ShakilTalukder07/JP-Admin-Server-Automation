@@ -81,7 +81,7 @@ function shuffle(arr) {
 }
 
 function legacyQuestionChannelId(cohort, choice) {
-  if (choice === 'workshop') return cohort.channels.workshop;
+  if (choice === 'workshop') return cohort.channels.workshop || cohort.channels.discussion;
   if (choice === 'dawn') return cohort.channels.discipline;
   return cohort.channels.discussion;
 }
@@ -170,8 +170,11 @@ async function dropQuestion(client, cohort, channelId, category, windowMin, requ
       return;
     }
     // channel override for workshop drops
-    if (channelId === cohort.channels.workshop) {
+    if (channelId && cohort.channels?.workshop && channelId === cohort.channels.workshop) {
       channelId = await resolveChannel(cohort, 'channel_workshop', channelId);
+    }
+    if (!channelId) {
+      channelId = cohort.channels?.discussion;
     }
     if (active[key]) { // one active per channel - retry in 5 min
       setTimeout(() => dropQuestion(client, cohort, channelId, category, windowMin, requireReply, manual), 5 * 60 * 1000);

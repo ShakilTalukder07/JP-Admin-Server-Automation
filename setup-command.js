@@ -29,7 +29,6 @@ const STANDARD_CHANNELS = [
   { name: 'outreach-update', key: 'outreach', aliases: ['outreach-updates', 'outreach'] },
   { name: 'interview-update', key: 'interviewUpdates', aliases: ['interview-updates'] },
   { name: 'job-task-update', key: 'jobTaskUpdates', aliases: ['job-task-updates', 'task-update', 'task-updates', 'job-tasks', 'job-task'] },
-  { name: 'communication-workshop', key: 'workshop' },
   { name: 'job-tracking-sheet', key: 'jobTracking', aliases: ['job-tracking'] },
   { name: 'right-to-be-referred', key: 'rtbr', lockedPosting: true },
   { name: 'automation-announcement', key: 'automationLog', lockedPosting: true },

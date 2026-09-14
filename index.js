@@ -41,7 +41,7 @@ async function initializeReadyFeatures(client) {
     require('./questions')(client);
     require('./jobs')(client);
     require('./weekly-report')(client);
-    require('./workshop')(client);
+    // require('./workshop')(client); // Disabled - Communication Workshop removed
     require('./rtbr')(client);
     require('./resources')(client);
     require('./activity-reconciliation')(client);
