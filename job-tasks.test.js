@@ -33,3 +33,13 @@ deadline: Tomorrow 5pm`;
 test('parseJobTaskMessage returns null for casual chat', () => {
   assert.equal(parseJobTaskMessage('Hello everyone, how are you?'), null);
 });
+
+test('parseJobTaskMessage returns null for template announcements', () => {
+  const template = `@everyone After get the Job Task please share your details using this format.
+
+Candidate Name:
+Company Name:
+Designation:
+Task Deadline:`;
+  assert.equal(parseJobTaskMessage(template), null);
+});

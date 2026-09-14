@@ -10,6 +10,7 @@ const { cohorts } = require('./config');
 const { getRoster, syncMembers } = require('./roster');
 const { appsScriptPost } = require('./apps-script-api');
 const { resolveChannel } = require('./settings');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function clean(value, limit = 300) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, limit);
@@ -23,14 +24,20 @@ function labeledValue(text, labels) {
   return clean(text.match(pattern)?.[1] || '');
 }
 
+function isLabelLike(val) {
+  const v = String(val || '').trim().toLowerCase().replace(/[:\-]/g, '');
+  return /^(candidate(\s*name)?|student(\s*name)?|company(\s*name)?|organisation|organization|agency|designation|role|position|job\s*title|task\s*deadline|deadline|submission\s*date|due\s*date|task\s*date)$/i.test(v);
+}
+
 function parseJobTaskMessage(text) {
   const source = String(text || '').trim();
   if (source.length < 10) return null;
+  if (source.includes('@everyone') || source.includes('@here')) return null;
 
-  const candidate = labeledValue(source, ['candidate(?:\\s+name)?', 'student(?:\\s+name)?', 'name']);
-  const company = labeledValue(source, ['company(?:\\s+name)?', 'organisation', 'organization', 'agency']);
-  const designation = labeledValue(source, ['designation', 'role', 'position', 'job\\s+title']);
-  const deadline = labeledValue(source, [
+  const rawCandidate = labeledValue(source, ['candidate(?:\\s+name)?', 'student(?:\\s+name)?', 'name']);
+  const rawCompany = labeledValue(source, ['company(?:\\s+name)?', 'organisation', 'organization', 'agency']);
+  const rawDesignation = labeledValue(source, ['designation', 'role', 'position', 'job\\s+title']);
+  const rawDeadline = labeledValue(source, [
     'task\\s+deadline',
     'deadline',
     'task\\s+submission\\s+date',
@@ -39,7 +46,13 @@ function parseJobTaskMessage(text) {
     'task\\s+date',
   ]);
 
+  const candidate = isLabelLike(rawCandidate) ? '' : rawCandidate;
+  const company = isLabelLike(rawCompany) ? '' : rawCompany;
+  const designation = isLabelLike(rawDesignation) ? '' : rawDesignation;
+  const deadline = isLabelLike(rawDeadline) ? '' : rawDeadline;
+
   if (!company && !deadline && !designation) return null;
+  if (!company && !deadline) return null;
 
   return {
     candidate,
@@ -134,11 +147,120 @@ async function processJobTaskMessage(msg) {
   }
 }
 
+async function backfillJobTasks(client, cohort, options = {}) {
+  const channelId = await resolveChannel(
+    cohort, 'channel_job_tasks', cohort.channels?.jobTaskUpdates);
+  if (!channelId) throw new Error('Job tasks channel not configured');
+  const channel = await client.channels.fetch(channelId);
+  if (!channel?.isTextBased()) throw new Error('Job tasks channel is not readable');
+
+  let roster = await getRoster(cohort, true);
+  const byId = new Map(roster.map(s => [s.discordId, s]));
+  const byName = new Map(roster.map(s => [String(s.name || '').toLowerCase().trim(), s]));
+
+  let before = null;
+  const allMessages = [];
+  for (let page = 0; page < 20; page++) {
+    const batch = await channel.messages.fetch({ limit: 100, before });
+    if (!batch.size) break;
+    for (const msg of batch.values()) {
+      allMessages.push(msg);
+    }
+    before = batch.last().id;
+    if (batch.size < 100) break;
+  }
+
+  // Chronological order so earliest tasks log first
+  allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  let recognized = 0;
+  let logged = 0;
+  let duplicates = 0;
+  let failed = 0;
+
+  for (const msg of allMessages) {
+    if (msg.author?.bot) continue;
+    if (msg.content.startsWith('!') || msg.content.trim().length < 10) continue;
+
+    const parsed = parseJobTaskMessage(msg.content);
+    if (!parsed || (!parsed.company && !parsed.deadline)) continue;
+    recognized++;
+
+    let student = byId.get(msg.author.id);
+    if (!student && parsed.candidate) {
+      student = byName.get(String(parsed.candidate).toLowerCase().trim());
+    }
+
+    const studentName = parsed.candidate || student?.name || msg.author.displayName || msg.author.username;
+    const email = student?.email || '';
+
+    try {
+      const result = await postTaskBackend(cohort, {
+        action: 'logJobTask',
+        guildId: cohort.guildId,
+        email,
+        name: studentName,
+        candidateName: parsed.candidate || studentName,
+        company: parsed.company,
+        designation: parsed.designation,
+        deadline: parsed.deadline,
+        date: dateKey(new Date(msg.createdTimestamp || Date.now()), cohort.timezone),
+        messageId: msg.id || '',
+        messageUrl: msg.url || '',
+      });
+
+      if (result && result.duplicate) {
+        duplicates++;
+      } else {
+        logged++;
+      }
+      await msg.react('📋').catch(() => {});
+      console.log(`[job-tasks] Backfilled ${recognized}: ${studentName} (${parsed.company}) -> ${result?.duplicate ? 'DUPLICATE' : 'SAVED'}`);
+      await sleep(1000);
+    } catch (err) {
+      failed++;
+      console.error('[job-tasks] Backfill task error for message', msg.id, err.message);
+      await sleep(1000);
+    }
+  }
+
+  return {
+    scanned: allMessages.length,
+    recognized,
+    logged,
+    duplicates,
+    failed,
+  };
+}
+
 module.exports = function registerJobTasks(client) {
-  client.on('messageCreate', msg => {
+  client.on('messageCreate', async msg => {
+    if (msg.author?.bot) return;
+    const command = msg.content.trim().toLowerCase();
+    if (command === '!synctasks' || command === '!syncjobtasks') {
+      const cohort = cohorts.find(c => c.guildId === msg.guildId);
+      if (!cohort || !cohort.supervisorIds.includes(msg.author.id)) return;
+      if (msg.channelId !== cohort.channels.supervisor) {
+        return msg.reply(`Run task synchronization in <#${cohort.channels.supervisor}>.`);
+      }
+
+      await msg.reply('🔄 Scanning `#job-task-update` and syncing all student job tasks to Google Sheet...');
+      try {
+        const result = await backfillJobTasks(client, cohort);
+        await msg.channel.send({
+          content: `✅ **Job Task Sync Complete!**\n• Scanned: **${result.scanned}** messages\n• Recognized tasks: **${result.recognized}**\n• Newly saved: **${result.logged}**\n• Already present / duplicates: **${result.duplicates}**\n• Failed: **${result.failed}**\nAll saved to the \`Job_Tasks_Log\` tab in Google Sheet. 🚀`,
+          allowedMentions: { parse: [] },
+        });
+      } catch (err) {
+        await msg.reply(`❌ Task sync failed: ${err.message}`);
+      }
+      return;
+    }
+
     processJobTaskMessage(msg).catch(err =>
       console.error('[job-tasks] Message processing error:', err.message));
   });
 };
 
 module.exports.parseJobTaskMessage = parseJobTaskMessage;
+module.exports.backfillJobTasks = backfillJobTasks;

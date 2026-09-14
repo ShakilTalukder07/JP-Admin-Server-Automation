@@ -77,11 +77,11 @@ function registerClient(client) {
   require('./forwarder')(client);
   require('./setup-command')(client);
   require('./self-hosted-setup').registerSelfHostedSetup(client);
-  require('./resume')(client);
+  // require('./resume')(client); // Disabled - channel removed
   require('./students')(client);
   require('./help')(client);
   require('./locations')(client);
-  require('./projects')(client);
+  // require('./projects')(client); // Disabled - channel removed
   require('./match')(client);
   require('./suggest')(client);
   require('./dm-nudges')(client);
