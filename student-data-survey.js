@@ -14,7 +14,7 @@ const {
   TextInputStyle,
 } = require('discord.js');
 const { cohorts } = require('./config');
-const { clearCache, getRoster, syncMembers } = require('./roster');
+const { clearCache, excluded, getRoster, isExcluded, syncMembers } = require('./roster');
 const { fetchGuildMembers } = require('./discord-members');
 const { chunkLines } = require('./message-chunks');
 const { createJoinRosterSyncQueue } = require('./join-roster-sync');
@@ -234,14 +234,74 @@ function resolveMentionedChannel(msg, content) {
   return rawId ? msg.guild.channels.cache.get(rawId) : null;
 }
 
-async function postChannelSurvey(msg, cohort, channel, profiles) {
+const EXCLUDED_ROLE_ALIASES = new Set([
+  'hired',
+  'successfully hired',
+  'inactive',
+  'inactive student',
+  'inactive students',
+  'eliminated',
+  'eliminated student',
+  'eliminated students',
+  'left',
+]);
+
+function hasExcludedRole(member) {
+  if (!member?.roles?.cache) return false;
+  return member.roles.cache.some(role => {
+    const name = String(role?.name || '').trim().toLowerCase().replace(/[\s_-]+/g, ' ');
+    return EXCLUDED_ROLE_ALIASES.has(name);
+  });
+}
+
+function isEligibleSurveyMember(cohort, member, roster) {
+  if (!member || member.user?.bot) return false;
+  const discordId = String(member.id || member.user?.id || '');
+  if (!discordId || (cohort?.supervisorIds || []).includes(discordId)) return false;
+
+  if (hasExcludedRole(member)) return false;
+  if (cohort?.guildId && excluded[cohort.guildId]?.has(discordId)) return false;
+
+  if (roster && Array.isArray(roster)) {
+    const student = roster.find(s => String(s.discordId || '') === discordId);
+    if (student && isExcluded(cohort, student)) return false;
+  }
+
+  return true;
+}
+
+async function getActiveMissingProfiles(cohort, client, options = {}) {
+  const [rawResult, roster] = await Promise.all([
+    backendGet(cohort, 'missingprofiles'),
+    options.roster || getRoster(cohort, true),
+  ]);
+  let members = new Map();
+  try {
+    const guild = await client.guilds.fetch(cohort.guildId);
+    if (guild) members = await fetchGuildMembers(guild);
+  } catch {}
+
+  const activeProfiles = (rawResult?.profiles || []).filter(profile => {
+    const member = members.get(profile.discordId);
+    return isEligibleSurveyMember(cohort, member, roster);
+  });
+
+  return {
+    ...(rawResult || {}),
+    profiles: activeProfiles,
+    incomplete: activeProfiles.length,
+  };
+}
+
+async function postChannelSurvey(msg, cohort, channel, profiles, options = {}) {
   if (!channel || channel.guildId !== cohort.guildId || !channel.isTextBased?.() || typeof channel.send !== 'function') {
     throw new Error('Choose a text channel in this server, for example `!profilesurvey #discussion`.');
   }
-  const members = await fetchGuildMembers(msg.guild);
+  const members = options.members || await fetchGuildMembers(msg.guild);
+  const roster = options.roster || await getRoster(cohort, true);
   const eligible = (profiles || []).filter(profile => {
     const member = members.get(profile.discordId);
-    return member && !member.user.bot && !cohort.supervisorIds.includes(member.id);
+    return isEligibleSurveyMember(cohort, member, roster);
   });
   if (!eligible.length) return { posted: 0, messages: 0 };
 
@@ -341,12 +401,14 @@ async function removeLegacyWelcomePanel(client, cohort) {
   return removed;
 }
 
-async function sendPrivateSurveys(client, cohort, profiles) {
+async function sendPrivateSurveys(client, cohort, profiles, options = {}) {
   const result = { sent: [], dmClosed: [], absent: [], receiptError: '' };
   const guild = await client.guilds.fetch(cohort.guildId);
+  const members = options.members || await fetchGuildMembers(guild);
+  const roster = options.roster || await getRoster(cohort, true);
   for (const profile of profiles || []) {
-    const member = await guild.members.fetch(profile.discordId).catch(() => null);
-    if (!member || member.user.bot || cohort.supervisorIds.includes(member.id)) {
+    const member = members.get(profile.discordId) || await guild.members.fetch(profile.discordId).catch(() => null);
+    if (!isEligibleSurveyMember(cohort, member, roster)) {
       result.absent.push(profile);
       continue;
     }
@@ -561,7 +623,7 @@ module.exports = function registerStudentDataSurvey(client) {
         syncResult = await syncMembers(client, cohort);
       }
       const [result, removed] = await Promise.all([
-        backendGet(cohort, 'missingprofiles'),
+        getActiveMissingProfiles(cohort, client),
         removeLegacyWelcomePanel(client, cohort),
       ]);
       if (isAttentionSurvey) {
@@ -706,7 +768,7 @@ module.exports = function registerStudentDataSurvey(client) {
       }
       await interaction.deferReply({ ephemeral: true });
       try {
-        const current = await backendGet(cohort, 'missingprofiles');
+        const current = await getActiveMissingProfiles(cohort, client);
         if (interaction.customId === DASHBOARD_REFRESH_ID) {
           await interaction.message.edit(dashboardPayload(cohort, current));
           await interaction.editReply('✅ Missing-data status refreshed.');
@@ -873,3 +935,7 @@ module.exports.parseEditProfileTargetId = parseEditProfileTargetId;
 module.exports.channelSurveyButton = channelSurveyButton;
 module.exports.hasCompletePrivateProfile = hasCompletePrivateProfile;
 module.exports.selectAttentionProfiles = selectAttentionProfiles;
+module.exports.isEligibleSurveyMember = isEligibleSurveyMember;
+module.exports.hasExcludedRole = hasExcludedRole;
+module.exports.postChannelSurvey = postChannelSurvey;
+module.exports.getActiveMissingProfiles = getActiveMissingProfiles;

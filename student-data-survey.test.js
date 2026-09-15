@@ -11,6 +11,9 @@ const {
   parseEditProfileTargetId,
   parseSurveyCustomId,
   selectAttentionProfiles,
+  isEligibleSurveyMember,
+  hasExcludedRole,
+  postChannelSurvey,
 } = require('./student-data-survey');
 
 test('portal-admitted members with complete private data do not receive a duplicate survey', () => {
@@ -124,3 +127,85 @@ test('manual profile modal does not wait for a backend read before opening', () 
   assert.match(handler, /ADMIN_SUBMIT_PREFIX, cohort\.guildId, adminEdit\.discordId/);
   assert.doesNotMatch(handler, /ADMIN_SUBMIT_PREFIX, cohort\.guildId, member\.id/);
 });
+
+test('hired and eliminated/inactive students are excluded from profile survey eligibility', () => {
+  const cohort = { guildId: 'guild-1', supervisorIds: ['sup-1'] };
+  const roster = [
+    { discordId: 'active-1', name: 'Active Student', active: true, status: '' },
+    { discordId: 'hired-1', name: 'Hired Student', active: true, status: 'hired' },
+    { discordId: 'eliminated-1', name: 'Eliminated Student', active: false, status: 'inactive' },
+  ];
+
+  // 1. Active incomplete student is eligible
+  const activeMember = { id: 'active-1', user: { bot: false }, roles: { cache: [] } };
+  assert.equal(isEligibleSurveyMember(cohort, activeMember, roster), true);
+
+  // 2. Hired student in roster is excluded
+  const hiredMember = { id: 'hired-1', user: { bot: false }, roles: { cache: [] } };
+  assert.equal(isEligibleSurveyMember(cohort, hiredMember, roster), false);
+
+  // 3. Eliminated/inactive student in roster is excluded
+  const eliminatedMember = { id: 'eliminated-1', user: { bot: false }, roles: { cache: [] } };
+  assert.equal(isEligibleSurveyMember(cohort, eliminatedMember, roster), false);
+
+  // 4. Student with Hired role in Discord is excluded even without roster entry
+  const discordHiredMember = {
+    id: 'unknown-hired',
+    user: { bot: false },
+    roles: { cache: [{ name: 'Hired' }] },
+  };
+  assert.equal(isEligibleSurveyMember(cohort, discordHiredMember, []), false);
+
+  // 5. Student with Inactive/Eliminated role in Discord is excluded
+  const discordInactiveMember = {
+    id: 'unknown-inactive',
+    user: { bot: false },
+    roles: { cache: [{ name: 'Inactive Student' }] },
+  };
+  assert.equal(isEligibleSurveyMember(cohort, discordInactiveMember, []), false);
+
+  // 6. Bot and supervisor are excluded
+  const botMember = { id: 'bot-1', user: { bot: true }, roles: { cache: [] } };
+  assert.equal(isEligibleSurveyMember(cohort, botMember, roster), false);
+  const supMember = { id: 'sup-1', user: { bot: false }, roles: { cache: [] } };
+  assert.equal(isEligibleSurveyMember(cohort, supMember, roster), false);
+});
+
+test('postChannelSurvey does not mention hired or eliminated students', async () => {
+  const cohort = { guildId: 'guild-1', supervisorIds: ['sup-1'] };
+  const sentMessages = [];
+  const channel = {
+    guildId: 'guild-1',
+    isTextBased: () => true,
+    send: async (payload) => {
+      sentMessages.push(payload);
+      return { id: 'msg-1' };
+    },
+  };
+
+  const members = new Map([
+    ['active-1', { id: 'active-1', user: { bot: false }, roles: { cache: [] } }],
+    ['hired-1', { id: 'hired-1', user: { bot: false }, roles: { cache: [{ name: 'Hired' }] } }],
+    ['eliminated-1', { id: 'eliminated-1', user: { bot: false }, roles: { cache: [{ name: 'Inactive Student' }] } }],
+  ]);
+
+  const roster = [
+    { discordId: 'active-1', name: 'Active', active: true, status: '' },
+    { discordId: 'hired-1', name: 'Hired', active: true, status: 'hired' },
+    { discordId: 'eliminated-1', name: 'Eliminated', active: false, status: 'inactive' },
+  ];
+
+  const profiles = [
+    { discordId: 'active-1' },
+    { discordId: 'hired-1' },
+    { discordId: 'eliminated-1' },
+  ];
+
+  const result = await postChannelSurvey({ guild: {} }, cohort, channel, profiles, { members, roster });
+  assert.equal(result.posted, 1);
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0].content, /<@active-1>/);
+  assert.doesNotMatch(sentMessages[0].content, /<@hired-1>/);
+  assert.doesNotMatch(sentMessages[0].content, /<@eliminated-1>/);
+});
+
