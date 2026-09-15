@@ -114,7 +114,7 @@ const SECTIONS = [
     ['!backfilljobsheets [N days]', 'Import recent tracker links; defaults to 3 calendar days and accepts 1-30'],
     ['!jobscheck [YYYY-MM-DD]', 'Run today or recover one missed dated jobs check'],
     ['!checkjobsheets [YYYY-MM-DD]', 'Deep private tracker audit across public tabs; keeps contacts private, never pings/writes'],
-    ['!activityprompt outreach|interview|communication|all', 'Post one or all daily @everyone activity templates now'],
+    ['!activityprompt outreach|interview|jobtask|communication|all', 'Post one or all daily @everyone activity templates now'],
     ['!activitycheck attendance [YYYY-MM-DD]|jobs|interviews|all', 'Run checks now; attendance/jobs post private contact TSV in bot-admin'],
     ['!followup <type> [days N] [#channel]', 'Preview then manually announce selected gaps; never changes scheduled automation'],
     ['!repairinterviews', 'Remove exact historical Interview_Log duplicates and rebuild interview serials'],

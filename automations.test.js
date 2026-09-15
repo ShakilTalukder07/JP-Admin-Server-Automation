@@ -11,10 +11,11 @@ test('automation switch command does not collide with the control-center alias',
 
 test('activity prompts and escalations have individually controllable child switches', () => {
   for (const key of [
-    'outreachprompt', 'interviewprompt', 'communicationprompt',
+    'outreachprompt', 'interviewprompt', 'jobtaskprompt', 'communicationprompt',
     'attendancewarning', 'jobemergency', 'interviewfollowup',
   ]) assert.ok(KEYS[key]);
   assert.equal(PARENTS.outreachprompt, 'activityprompts');
+  assert.equal(PARENTS.jobtaskprompt, 'activityprompts');
   assert.equal(PARENTS.jobemergency, 'escalations');
 });
 

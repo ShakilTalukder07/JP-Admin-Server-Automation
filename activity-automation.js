@@ -8,7 +8,7 @@ const { cohorts } = require('./config');
 const { appsScriptGet, appsScriptPost } = require('./apps-script-api');
 const { isOn } = require('./automations');
 const { getRoster, isExcluded, mention, syncMembers } = require('./roster');
-const { getNumber, getSetting } = require('./settings');
+const { getNumber, getSetting, resolveChannel } = require('./settings');
 const { isScheduledToday } = require('./scheduler');
 const { scheduleAtSetting } = require('./runtime-schedule');
 const { isWarmup } = require('./state');
@@ -56,11 +56,13 @@ function attendanceFollowupPlan({ working, warmup, warningEnabled, mailerEnabled
 
 function parseActivityCommand(content) {
   const match = String(content || '').trim().match(
-    /^!activity(prompt|check)(?:\s+(outreach|interview|communication|attendance|jobs|interviews|all))?(?:\s+(\d{4}-\d{2}-\d{2}))?$/i);
+    /^!activity(prompt|check)(?:\s+(outreach|interview|jobtask|jobtasks|task|tasks|communication|attendance|jobs|interviews|all))?(?:\s+(\d{4}-\d{2}-\d{2}))?$/i);
   if (!match) return null;
+  let kind = (match[2] || 'all').toLowerCase();
+  if (['jobtasks', 'task', 'tasks'].includes(kind)) kind = 'jobtask';
   return {
     action: match[1].toLowerCase(),
-    kind: (match[2] || 'all').toLowerCase(),
+    kind,
     date: String(match[3] || ''),
   };
 }
@@ -181,15 +183,18 @@ async function sendLines(channel, lines, mentionEveryone = true) {
 const PROMPTS = {
   outreach: `@everyone\n📣 **Daily outreach update — use this template**\n\n**Date:**\n**Companies / people contacted:**\n**Contact method:** LinkedIn / email / other\n**Replies or results:**\n**Next follow-up step:**\n\nShare at least the configured daily outreach target. Do not post private passwords or confidential company information.\n\n⏰ JP ADMIN records bot-tracked channel activity only during the **4:50 AM–11:30 PM** active window.`,
   interview: `@everyone\n🎯 **Interview update reminder**\n\nIf you received, scheduled, or completed an interview, share:\n**Interview serial:**\n**Company and position:**\n**Interview date and time:**\n**Remote / onsite:**\n**Job post or company link:**\n**Current stage / result:**\n**Preparation help needed:**\n\nEven an unsuccessful interview is valuable evidence for improving the next one.\n\n⏰ JP ADMIN records bot-tracked channel activity only during the **4:50 AM–11:30 PM** active window.`,
+  jobtask: `@everyone\n📋 **Job task update reminder — use this template**\n\nAfter getting a Job Task, please share your details using this format:\n**Candidate Name:**\n**Company Name:**\n**Designation:**\n**Task Deadline:**\n\nShare your task details as soon as you receive it so mentors can assist you with your task and track your progress.\n\n⏰ JP ADMIN records bot-tracked channel activity only during the **4:50 AM–11:30 PM** active window.`,
   communication: `@everyone\n🎤 **Daily communication practice**\n\nUse this channel for today’s practice and report:\n**Practice type:** mock interview / technical explanation / English speaking\n**Topic or question practiced:**\n**Practice duration:**\n**What felt difficult:**\n**What you will improve next:**\n\nConsistent practice matters more than waiting to feel confident.\n\n⏰ JP ADMIN records bot-tracked channel activity only during the **4:50 AM–11:30 PM** active window.`,
 };
 
 async function postPrompt(client, cohort, kind) {
   const channelId = kind === 'outreach'
-    ? cohort.channels.outreach
+    ? (await resolveChannel(cohort, 'channel_outreach', cohort.channels?.outreach))
     : kind === 'interview'
-      ? cohort.channels.interviewUpdates
-      : cohort.channels.workshop;
+      ? (await resolveChannel(cohort, 'channel_interview', cohort.channels?.interviewUpdates))
+      : kind === 'jobtask'
+        ? (await resolveChannel(cohort, 'channel_job_tasks', cohort.channels?.jobTaskUpdates))
+        : (await resolveChannel(cohort, 'channel_workshop', cohort.channels?.workshop));
   if (!channelId) throw new Error(`${kind} channel is not configured`);
   const channel = await client.channels.fetch(channelId);
   await channel.send({ content: PROMPTS[kind], allowedMentions: { parse: ['everyone'] } });
@@ -509,6 +514,7 @@ module.exports = function registerActivityAutomation(client) {
     for (const [kind, setting] of [
       ['outreach', 'outreachprompttime'],
       ['interview', 'interviewprompttime'],
+      ['jobtask', 'jobtaskprompttime'],
       ['communication', 'communicationprompttime'],
     ]) {
       scheduleAtSetting(cohort, `activityprompt:${kind}`, setting, async () => {
@@ -541,9 +547,12 @@ module.exports = function registerActivityAutomation(client) {
     try {
       await message.reply('⏳ Running the requested cohort activity automation...');
       if (action === 'prompt') {
-        const kinds = kind === 'all' ? ['outreach', 'interview', 'communication'] : [kind];
-        if (!kinds.every(item => PROMPTS[item])) throw new Error('Prompt choices: outreach, interview, communication, all');
-        for (const item of kinds) await postPrompt(client, cohort, item);
+        const kinds = kind === 'all' ? ['outreach', 'interview', 'jobtask', 'communication'] : [kind];
+        if (!kinds.every(item => PROMPTS[item])) throw new Error('Prompt choices: outreach, interview, jobtask, communication, all');
+        for (const item of kinds) {
+          if (item === 'communication' && !cohort.channels?.workshop && !(await resolveChannel(cohort, 'channel_workshop', ''))) continue;
+          await postPrompt(client, cohort, item);
+        }
       } else {
         const runners = {
           attendance: (bot, item) => runAttendanceWarning(bot, item, {

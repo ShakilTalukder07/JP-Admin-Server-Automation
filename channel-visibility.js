@@ -10,6 +10,7 @@ const { appsScriptGet, appsScriptPost } = require('./apps-script-api');
 const VISIBILITY_GROUPS = Object.freeze([
   { label: 'outreach', channelKeys: ['outreach'], automationKeys: ['outreach', 'outreachprompt'] },
   { label: 'interviews', channelKeys: ['interviewUpdates'], automationKeys: ['interviewprompt', 'interviewfollowup'] },
+  { label: 'job-tasks', channelKeys: ['jobTaskUpdates'], automationKeys: ['jobtaskprompt'] },
   { label: 'communication', channelKeys: ['workshop'], automationKeys: ['workshop', 'communicationprompt'] },
   { label: 'right-to-be-referred', channelKeys: ['rtbr'], automationKeys: ['rtbr'] },
   { label: 'Dawn Focus', channelKeys: ['discipline', 'groupActivities'], automationKeys: ['discipline', 'specialworkshop'] },

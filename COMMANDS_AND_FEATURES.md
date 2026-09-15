@@ -195,7 +195,7 @@ absence command counts recorded session columns rather than calendar days.
 | `!backfilljobsheets [N days]` | `jobs.js` | Scans the latest three cohort calendar days by default, or an explicit 1-30-day window, and saves the newest in-window tracker link per student. Pagination stops at the first older date; existing daily job history is untouched. |
 | `!jobscheck [YYYY-MM-DD]` | `jobs.js` | Runs the student-facing target check for today or an explicitly requested missed date and saves one authoritative dated count per tracker. Future dates are rejected. |
 | `!checkjobsheets [YYYY-MM-DD]` | `jobs.js` | Slow private read-only audit for the requested cohort date. It fresh-reads up to 30 public tabs per tracker, reports the selected table's total application rows and requested-date count, preserves every explicitly submitted `gid`, includes phone/WhatsApp without preview cards, reports unsafe/invalid dates, chunks safely, and performs no student pings or score/count writes. |
-| `!activityprompt outreach\|interview\|communication\|all` | `activity-automation.js` | Manually posts the selected student-facing 06:00 template with controlled `@everyone`. |
+| `!activityprompt outreach\|interview\|jobtask\|communication\|all` | `activity-automation.js` | Manually posts the selected student-facing 06:00 template with controlled `@everyone`. |
 | `!activitycheck attendance [YYYY-MM-DD]\|jobs\|interviews\|all` | `activity-automation.js` | Manually runs the absence, two-workday job-target, or Thursday interview follow-up logic and returns an explicit private result, including zero-new-incident success. The optional date applies only to attendance and defaults to the current cohort date. Attendance/job checks also post a copyable name/email/phone/reason TSV only in that cohort's private `#bot-admin`. |
 | `!mailer status\|enable\|disable\|quota` | `mailer.js` | Private mailer status and opt-in automation control. Enabling requires a configured private To address. |
 | `!mailer to\|cc\|bcc <emails\|none>` | `mailer.js` | Configure administrative headers. `solih@programming-hero.com` is always retained in CC; `cc none` removes only additional addresses. Dynamic student recipients remain BCC-only and are deduplicated from visible headers. |
@@ -266,7 +266,7 @@ the umbrella switch for both leaderboard keys.
 
 Day-schedule keys are `attendance`, `outreach`, `jobs`, `questions`,
 `workshop`, `specialworkshop`, `leaderboard`, `weeklyreport`, `rtbr`, `resources`, `dmnudges`,
-`suggestions`, `outreachprompt`, `interviewprompt`, `communicationprompt`,
+`suggestions`, `outreachprompt`, `interviewprompt`, `jobtaskprompt`, `communicationprompt`,
 `interviewfollowup`, `contentsync`, and
 `discipline`. `weeklyreport` and `rtbr` both default to Thursday;
 `everyday` explicitly overrides those defaults.
@@ -334,7 +334,7 @@ secondary metric; daily application/outreach goals must be at least one.
 | Attendance form state reminders | `attendance.js` | 21:00 and 22:15 | `attendance` switch + day schedule |
 | Attendance report eligibility | `attendance.js`, Apps Script v52 | On `!closeform` / `!attendance` | Current guild roster only. Already-inactive, hired, left, protected, and supervisor records are excluded at both backend and Discord layers. A warning-3 student appears on deactivation day only because warning classification follows the report. |
 | Outreach follow-up check | `outreach.js` | 20:00 | `outreach` switch + day schedule; includes every active student below the configured daily count |
-| Outreach/interview/communication templates | `activity-automation.js` | 06:00 Sun–Thu | umbrella `activityprompts` plus individual switch/day schedule + warm-up |
+| Outreach/interview/job-task/communication templates | `activity-automation.js` | 06:00 Sun–Thu | umbrella `activityprompts` plus individual switch/day schedule + warm-up |
 | Consecutive-attendance warning | `formcontrol.js`, `attendance.js`, `activity-automation.js` | Every working day, ten minutes after a successful non-silent `!closeform` report; durable startup/configured-time recovery | `attendancewarning` switch + warm-up. The report-date work calendar—not a stale feature-day override—controls eligibility. Only two consecutive recorded-session absences count; `P` or approved `L` breaks the run. The shared baseline applies to everyone, one check can add at most one warning, and warning 3 marks inactive. |
 | Attendance/warning mailer | `formcontrol.js`, `activity-automation.js`, `mailer.js` | After the ten-minute warning classification; durable and idempotent across restart/retry | Opt-in `mailer` switch independent of the warning switch/day override. Warning 1/2/3 groups supersede ordinary absence for that date; inactive students are not mailed again on later dates. Private previews reconcile the Attendance total and attach eligible/skipped address details without exposing them publicly. |
 | Two-day application-target emergency | `activity-automation.js` | Every working day at 08:10 | `jobemergency` switch + warm-up. It checks the two preceding working days; approved leave is excused. Holidays are skipped. |

@@ -71,6 +71,7 @@ const DEFAULTS = {
   activityreconciletime: '22:50',
   outreachprompttime: '06:00',
   interviewprompttime: '06:00',
+  jobtaskprompttime: '06:00',
   communicationprompttime: '06:00',
   attendancewarningtime: '08:00',
   attendancewarningstart: '',
@@ -153,6 +154,7 @@ const TIMES = {
   suggestions: { key: 'suggestiontime', label: 'AI activity suggestion' },
   outreachprompt: { key: 'outreachprompttime', label: 'Outreach template prompt' },
   interviewprompt: { key: 'interviewprompttime', label: 'Interview-update prompt' },
+  jobtaskprompt: { key: 'jobtaskprompttime', label: 'Job task template prompt' },
   communicationprompt: { key: 'communicationprompttime', label: 'Communication prompt' },
   attendancewarning: { key: 'attendancewarningtime', label: 'Consecutive-absence warning' },
   warningreport: { key: 'warningreporttime', label: 'Weekly private warning report' },
@@ -313,7 +315,8 @@ function registerSettings(client) {
 
     if (lower.startsWith('!time ')) {
       const parts = content.split(/\s+/);
-      const item = TIMES[(parts[1] || '').toLowerCase()];
+      const requested = (parts[1] || '').toLowerCase();
+      const item = TIMES[requested] || (['taskprompt', 'task'].includes(requested) ? TIMES.jobtaskprompt : null);
       const time = normalizeTime(parts[2]);
       if (!item || parts.length !== 3 || !time) {
         return msg.reply(`Usage: \`!time <${Object.keys(TIMES).join('|')}> HH:MM\` (24-hour cohort time)`);

@@ -27,7 +27,7 @@ const SCHEDULE_KEYS = [
   'attendance', 'outreach', 'jobs', 'questions', 'workshop',
   'specialworkshop',
   'leaderboard', 'weeklyreport', 'rtbr', 'resources', 'dmnudges', 'suggestions',
-  'outreachprompt', 'interviewprompt', 'communicationprompt',
+  'outreachprompt', 'interviewprompt', 'jobtaskprompt', 'communicationprompt',
   'interviewfollowup',
   'warningreport',
   'contentsync', 'discipline',

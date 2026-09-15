@@ -91,7 +91,7 @@ module.exports = function registerControlCenter(client) {
                 '`!automation start|stop <key|all>`',
                 '`!target applications 10` · `!target outreach 3`',
                 '`!time jobs 22:30` · `!time outreach 20:00`',
-                '`!time outreachprompt 06:00` · `!time interviewprompt 06:00`',
+                '`!time outreachprompt 06:00` · `!time interviewprompt 06:00` · `!time jobtaskprompt 06:00`',
                 '`!schedule jobs sun-thu` · `!schedule workshop everyday`',
                 '`!questions` · `!workshop` — clickable schedule controls',
                 '`!set rtbrdays 7` · `!set rtbrtop 10`',

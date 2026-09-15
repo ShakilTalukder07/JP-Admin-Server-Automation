@@ -88,5 +88,19 @@ test('weekly interview reminder finds active students with no recorded update', 
   assert.deepEqual(withoutInterviews(rows, roster).map(item => item.email), ['b@example.com']);
   assert.match(PROMPTS.outreach, /4:50 AM–11:30 PM/);
   assert.match(PROMPTS.interview, /@everyone/);
+  assert.match(PROMPTS.jobtask, /@everyone/);
+  assert.match(PROMPTS.jobtask, /Candidate Name:/);
   assert.match(PROMPTS.communication, /@everyone/);
+});
+
+test('activityprompt command parses jobtask and task aliases', () => {
+  assert.deepEqual(parseActivityCommand('!activityprompt jobtask'), {
+    action: 'prompt', kind: 'jobtask', date: '',
+  });
+  assert.deepEqual(parseActivityCommand('!activityprompt task'), {
+    action: 'prompt', kind: 'jobtask', date: '',
+  });
+  assert.deepEqual(parseActivityCommand('!activityprompt jobtasks'), {
+    action: 'prompt', kind: 'jobtask', date: '',
+  });
 });

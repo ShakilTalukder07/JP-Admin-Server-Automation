@@ -26,7 +26,7 @@ test('every runtime automation clock has a friendly command alias', () => {
     'formopen', 'formclose', 'outreach', 'jobs', 'activityreconcile', 'questionplan', 'leaderboard',
     'workshopannounce', 'workshopnoshow', 'weeklyreport', 'rtbr', 'resources',
     'dmnudges', 'suggestions', 'outreachprompt', 'interviewprompt',
-    'communicationprompt', 'attendancewarning', 'warningreport', 'jobemergency',
+    'jobtaskprompt', 'communicationprompt', 'attendancewarning', 'warningreport', 'jobemergency',
     'interviewmorning', 'interviewreview', 'contentsync',
     'dawnreset', 'dawnprompt', 'dawncheck',
   ]);
