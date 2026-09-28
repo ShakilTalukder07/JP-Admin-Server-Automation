@@ -197,6 +197,91 @@ function dateHeaderConfidence(value) {
   return 0;
 }
 
+function companyHeaderConfidence(value) {
+  const label = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!label || label.length > 120) return 0;
+  if (/^(?:company(?:\s*name)?|employer|organisation|organization|কোম্পানি|কোম্পানির\s*নাম|প্রতিষ্ঠান)$/.test(label)) return 4;
+  if (/company|employer|organisation|organization|কোম্পানি|প্রতিষ্ঠান/.test(label)) return 3;
+  return 0;
+}
+
+function linkHeaderConfidence(value) {
+  const label = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!label || label.length > 120) return 0;
+  if (/apply\s*(link|url)|job\s*(link|url)|posting\s*(link|url)|source\s*(link|url)/.test(label)) return 4;
+  if (/^(?:link|url|job\s*link|apply\s*link|circular(?:\s*link)?|post\s*link|source(?:\s*link)?|লিংক|ইউআরএল)$/.test(label)) return 3;
+  if (/\b(?:link|url|circular)\b/.test(label)) return 2;
+  return 0;
+}
+
+function roleHeaderConfidence(value) {
+  const label = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!label || label.length > 120) return 0;
+  if (/job\s*(title|role|position|post)|position|vacancy|role|পজিশন|পদ/.test(label)) return 3;
+  if (/^(?:title|designation|post)$/.test(label)) return 2;
+  return 0;
+}
+
+function findBestColumnIndex(cols, confidenceFn) {
+  let bestIndex = -1;
+  let bestScore = 0;
+  for (let i = 0; i < cols.length; i++) {
+    const score = confidenceFn(cols[i]?.label);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+function isLinkValue(val) {
+  const s = String(val || '').trim();
+  if (!s) return false;
+  return /^https?:\/\//i.test(s) ||
+    /^www\./i.test(s) ||
+    /^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:\/|\?|#|$)/i.test(s) ||
+    /https?:\/\//i.test(s);
+}
+
+function hasLinkContent(cell) {
+  if (!cell) return false;
+  return isLinkValue(cell.v) || isLinkValue(cell.f);
+}
+
+function evaluateRowCompleteness(row, cols, { dateCol, companyCol, linkCol }) {
+  let missingCompany = false;
+  if (companyCol !== -1) {
+    const compCell = row.c?.[companyCol];
+    const compVal = String(compCell?.v ?? compCell?.f ?? '').trim();
+    if (!compVal) missingCompany = true;
+  }
+
+  let missingLink = false;
+  if (linkCol !== -1) {
+    const linkCell = row.c?.[linkCol];
+    const hasCellLink = hasLinkContent(linkCell);
+    const hasAnyLink = hasCellLink || (row.c || []).some(cell => hasLinkContent(cell));
+    if (!hasAnyLink) missingLink = true;
+  }
+
+  const otherCellsCount = (row.c || []).filter((cell, idx) =>
+    idx !== dateCol && (isNonEmpty(cell?.v) || isNonEmpty(cell?.f))
+  ).length;
+  const emptyRowData = cols.length > 1 && otherCellsCount === 0;
+
+  const incomplete = missingCompany || missingLink || emptyRowData;
+  const reasons = [];
+  if (missingCompany) reasons.push('missing company');
+  if (missingLink) reasons.push('missing link');
+  if (emptyRowData) reasons.push('empty row');
+
+  return {
+    isComplete: !incomplete,
+    reasons,
+  };
+}
+
 function applicationHeaderConfidence(value) {
   const label = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
   if (!label || label.length > 120) return 0;
@@ -291,13 +376,24 @@ function applicationColumnIndexes(cols) {
   return indexes;
 }
 
-function rowHasApplicationData(row, indexes, dateCol) {
-  const candidates = [...indexes];
-  if (dateCol >= 0 && !candidates.includes(dateCol)) candidates.push(dateCol);
-  return candidates.some(index => {
-    const cell = row.c?.[index];
+function rowHasApplicationData(row, applicationCols, dateCol, companyCol = -1, linkCol = -1) {
+  if (companyCol >= 0 || linkCol >= 0) {
+    const hasCompany = companyCol >= 0 && isNonEmpty(row.c?.[companyCol]?.v ?? row.c?.[companyCol]?.f);
+    const hasLink = linkCol >= 0 && (hasLinkContent(row.c?.[linkCol]) || isNonEmpty(row.c?.[linkCol]?.v ?? row.c?.[linkCol]?.f));
+    if (hasCompany || hasLink) return true;
+  }
+  const candidates = [...applicationCols];
+  if (candidates.length) {
+    return candidates.some(index => {
+      const cell = row.c?.[index];
+      return cell && (isNonEmpty(cell.v) || isNonEmpty(cell.f));
+    });
+  }
+  if (dateCol >= 0) {
+    const cell = row.c?.[dateCol];
     return cell && (isNonEmpty(cell.v) || isNonEmpty(cell.f));
-  });
+  }
+  return false;
 }
 
 function parseTrackerTable(data, options = {}) {
@@ -323,27 +419,48 @@ function parseTrackerTable(data, options = {}) {
   }
   const cols = table.cols || [];
   const applicationCols = applicationColumnIndexes(cols);
+  const companyCol = findBestColumnIndex(cols, companyHeaderConfidence);
+  const positionCol = findBestColumnIndex(cols, roleHeaderConfidence);
+  let linkCol = findBestColumnIndex(cols, linkHeaderConfidence);
+
+  if (linkCol === -1) {
+    let bestCount = 0;
+    for (let cIdx = 0; cIdx < cols.length; cIdx++) {
+      if (cIdx === selected?.index || cIdx === companyCol) continue;
+      let urlCount = 0;
+      for (const r of (table.rows || []).slice(0, 30)) {
+        if (hasLinkContent(r.c?.[cIdx])) urlCount++;
+      }
+      if (urlCount >= 2 && urlCount > bestCount) {
+        bestCount = urlCount;
+        linkCol = cIdx;
+      }
+    }
+  }
+
   if (!selected) {
     if (!applicationCols.length) {
       throw new Error('no application table or date column found');
     }
-    const totalApplicationRows = (table.rows || []).filter(row => rowHasApplicationData(row, applicationCols, -1)).length;
+    const totalApplicationRows = (table.rows || []).filter(row => rowHasApplicationData(row, applicationCols, -1, companyCol, linkCol)).length;
     return {
       counts: {}, companiesByDay: {}, datedRows: 0, invalidDateRows: 0, invalidDateSamples: [],
+      incompleteRows: 0, incompleteByDay: {}, incompleteReasons: {},
       dateColumn: '', dateUnavailable: true, trackerMode: 'snapshot', totalApplicationRows, headerRow,
     };
   }
 
   const dateCol = selected.index;
-  const companyCol = cols.findIndex(c => /company|employer|organization|organisation/i.test(String(c.label || '')));
   const counts = {};
   const companiesByDay = {};
-  let datedRows = 0, invalidDateRows = 0;
+  const incompleteByDay = {};
+  const incompleteReasons = {};
+  let datedRows = 0, invalidDateRows = 0, totalIncompleteRows = 0;
   const invalidDateSamples = [];
   let totalApplicationRows = 0;
 
   for (const row of table.rows || []) {
-    if (rowHasApplicationData(row, applicationCols, dateCol)) totalApplicationRows++;
+    if (rowHasApplicationData(row, applicationCols, dateCol, companyCol, linkCol)) totalApplicationRows++;
     const cell = row.c?.[dateCol];
     if (!cell || (!isNonEmpty(cell.v) && !isNonEmpty(cell.f))) continue;
     const key = parseDateCell(cell, cols[dateCol], timezone, options.targetDate);
@@ -356,6 +473,24 @@ function parseTrackerTable(data, options = {}) {
       continue;
     }
     datedRows++;
+
+    const completeness = evaluateRowCompleteness(row, cols, {
+      dateCol,
+      companyCol,
+      linkCol,
+      roleCol: positionCol,
+    });
+
+    if (!completeness.isComplete) {
+      totalIncompleteRows++;
+      incompleteByDay[key] = (incompleteByDay[key] || 0) + 1;
+      incompleteReasons[key] = incompleteReasons[key] || [];
+      if (incompleteReasons[key].length < 3) {
+        incompleteReasons[key].push(completeness.reasons.join(', '));
+      }
+      continue;
+    }
+
     counts[key] = (counts[key] || 0) + 1;
     if (companyCol !== -1) {
       const companyCell = row.c?.[companyCol];
@@ -367,7 +502,11 @@ function parseTrackerTable(data, options = {}) {
 
   return {
     counts, companiesByDay, datedRows, invalidDateRows, invalidDateSamples,
-    dateColumn: String(selected.label), dateUnavailable: false, trackerMode: 'dated',
+    incompleteRows: totalIncompleteRows, incompleteByDay, incompleteReasons,
+    dateColumn: String(selected.label),
+    companyColumn: companyCol !== -1 ? String(cols[companyCol]?.label || '') : '',
+    linkColumn: linkCol !== -1 ? String(cols[linkCol]?.label || '') : '',
+    dateUnavailable: false, trackerMode: 'dated',
     totalApplicationRows, headerRow,
   };
 }
@@ -652,6 +791,10 @@ module.exports = {
   buildGvizUrl,
   chooseDateColumn,
   applicationHeaderConfidence,
+  companyHeaderConfidence,
+  linkHeaderConfidence,
+  evaluateRowCompleteness,
+  isLinkValue,
   extractGvizJson,
   promoteEmbeddedHeader,
   parseDateValue,

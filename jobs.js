@@ -122,11 +122,16 @@ function formatDailyTrackerLine(result, dailyTarget, historyDays) {
     : result.newRows === null
       ? 'new rows unavailable'
       : `new rows: **${result.newRows}**`;
+  const incompleteText = result.incompleteRowsToday
+    ? ` · ⚠️ **${result.incompleteRowsToday}** incomplete row(s)`
+    : '';
   const mismatch = !result.dateUnavailable && Number(result.newRows) > Number(result.todayCount)
-    ? ' · ⚠️ new-row count is higher than dated-today; check recent date cells'
+    ? (result.incompleteRowsToday
+        ? ` · ℹ️ new rows higher due to ${result.incompleteRowsToday} incomplete row(s)`
+        : ' · ⚠️ new-row count is higher than dated-today; check recent date cells')
     : '';
   return `${icon} ${mention(result.s)} — ${todayLabel}: **${result.todayCount}** · ` +
-    `total tracker rows: **${result.totalRows}** · ${rowChange} · ` +
+    `total tracker rows: **${result.totalRows}** · ${rowChange}${incompleteText} · ` +
     `previous ${historyDays} days: ${(result.prev || []).join(', ')}${mismatch}`;
 }
 
@@ -172,7 +177,7 @@ async function runJobsCheck(client, cohort, manual = false, targetDate = '') {
     }]));
     const channel = await client.channels.fetch(await resolveChannel(cohort, 'channel_jobs', cohort.channels.jobTracking));
 
-    const below = [], noSheet = [], unreadable = [], dateIssues = [], allCounts = [], duplicates = [];
+    const below = [], noSheet = [], unreadable = [], dateIssues = [], incompleteIssues = [], allCounts = [], duplicates = [];
     const dailyResults = [];
     const snapshotEstimates = [], snapshotBaselines = [], parsedStudents = [];
     let hitTarget = 0;
@@ -253,6 +258,10 @@ async function runJobsCheck(client, cohort, manual = false, targetDate = '') {
         if (r.invalidDateRows) {
           dateIssues.push({ s, count: r.invalidDateRows, column: r.dateColumn });
         }
+        const incompleteToday = r.incompleteByDay?.[today] || 0;
+        if (incompleteToday > 0) {
+          incompleteIssues.push({ s, count: incompleteToday, reasons: r.incompleteReasons?.[today] || [] });
+        }
       }
       allCounts.push({ email: s.email, count: todayCount });
       dailyResults.push({
@@ -262,6 +271,7 @@ async function runJobsCheck(client, cohort, manual = false, targetDate = '') {
         newRows: snapshot && !snapshot.baseline ? Number(snapshot.count) || 0 : null,
         baseline: Boolean(snapshot && snapshot.baseline),
         dateUnavailable: Boolean(r.dateUnavailable),
+        incompleteRowsToday: r.incompleteByDay?.[today] || 0,
         prev: prevDays.map(k => r.counts[k] || 0),
       });
       // duplicate companies today (same company applied 2+ times)
@@ -314,6 +324,12 @@ async function runJobsCheck(client, cohort, manual = false, targetDate = '') {
         lines.push(`• **${issue.s.name}** — ${issue.count} row(s) in **${issue.column}**`);
       }
     }
+    if (incompleteIssues.length) {
+      lines.push(`\n⚠️ **Incomplete application rows found today** (missing company or apply link — not counted towards target):`);
+      for (const item of incompleteIssues) {
+        lines.push(`• **${item.s.name}** — **${item.count}** row(s) missing required info/link`);
+      }
+    }
     if (snapshotEstimates.length) {
       lines.push(`\n🧮 **Estimated from new tracker rows** (these sheets have no usable application-date column):`);
       for (const item of snapshotEstimates) lines.push(`• **${item.s.name}** — **${item.count}** new row(s) since the previous successful check`);
@@ -322,7 +338,7 @@ async function runJobsCheck(client, cohort, manual = false, targetDate = '') {
       lines.push(`\n📐 **Tracker baseline created** — counting starts from the next successful check unless a date column is added:`);
       for (const s of snapshotBaselines) lines.push(`• **${s.name}**`);
     }
-    if (!below.length && !noSheet.length && !unreadable.length && !dateIssues.length) {
+    if (!below.length && !noSheet.length && !unreadable.length && !dateIssues.length && !incompleteIssues.length) {
       lines.push('🌟 Every single student hit the target today. Phenomenal!');
     }
 
@@ -408,6 +424,7 @@ async function runJobSheetAudit(client, cohort, dateKey) {
         s,
         status: parsed.invalidDateRows ? 'warning' : 'readable',
         count: parsed.counts[dateKey] || 0,
+        incompleteRows: parsed.incompleteByDay?.[dateKey] || 0,
         dateColumn: parsed.dateColumn,
         resolvedTabName: parsed.resolvedTabName || '',
         tabDiscovered: Boolean(parsed.tabDiscovered),

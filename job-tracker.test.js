@@ -382,3 +382,52 @@ test('extracts the JSON object from a gviz response wrapper', () => {
   const data = extractGvizJson('/*O_o*/\ngoogle.visualization.Query.setResponse({"status":"ok","table":{"cols":[],"rows":[]}});');
   assert.equal(data.status, 'ok');
 });
+
+test('counts complete rows with date, company, and link while excluding incomplete rows', () => {
+  const result = parseTrackerTable({ table: {
+    cols: [
+      { id: 'A', label: 'Date Applied', type: 'string' },
+      { id: 'B', label: 'Company Name', type: 'string' },
+      { id: 'C', label: 'Job Role', type: 'string' },
+      { id: 'D', label: 'Apply Link', type: 'string' },
+    ],
+    rows: [
+      // Complete row: date + company + role + link
+      { c: [{ v: '2026-09-28' }, { v: 'Acme Corp' }, { v: 'Frontend Developer' }, { v: 'https://acme.com/jobs/1' }] },
+      // Incomplete row 1: missing link
+      { c: [{ v: '2026-09-28' }, { v: 'Beta LLC' }, { v: 'Backend Developer' }, { v: '' }] },
+      // Incomplete row 2: missing company
+      { c: [{ v: '2026-09-28' }, { v: '' }, { v: 'Fullstack' }, { v: 'https://beta.com/jobs/2' }] },
+      // Incomplete row 3: only date is filled
+      { c: [{ v: '2026-09-28' }, null, null, null] },
+      // Complete row for another company
+      { c: [{ v: '2026-09-28' }, { v: 'Gamma Inc' }, { v: 'DevOps' }, { v: 'https://gamma.com/apply' }] },
+    ],
+  } }, { timezone: 'Asia/Dhaka' });
+
+  assert.equal(result.counts['2026-09-28'], 2);
+  assert.equal(result.datedRows, 5);
+  assert.equal(result.incompleteRows, 3);
+  assert.equal(result.incompleteByDay['2026-09-28'], 3);
+  assert.deepEqual(result.companiesByDay['2026-09-28'], ['acme corp', 'gamma inc']);
+});
+
+test('auto-detects link column from cell URLs and enforces link presence', () => {
+  const result = parseTrackerTable({ table: {
+    cols: [
+      { id: 'A', label: 'Application Date', type: 'string' },
+      { id: 'B', label: 'Company', type: 'string' },
+      { id: 'C', label: 'Post Link', type: 'string' },
+    ],
+    rows: [
+      { c: [{ v: '2026-09-28' }, { v: 'Acme' }, { v: 'https://linkedin.com/jobs/view/123' }] },
+      { c: [{ v: '2026-09-28' }, { v: 'Acme 2' }, { v: 'https://bdjobs.com/circular/456' }] },
+      { c: [{ v: '2026-09-28' }, { v: 'Acme 3' }, { v: '' }] },
+    ],
+  } });
+
+  assert.equal(result.counts['2026-09-28'], 2);
+  assert.equal(result.incompleteRows, 1);
+  assert.equal(result.incompleteByDay['2026-09-28'], 1);
+});
+

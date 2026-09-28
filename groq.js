@@ -6,7 +6,9 @@
 //  • getStatus() reads Groq's rate-limit headers for !groqstatus
 // ============================================================
 const cfg = require('./config');
-const groq = cfg.groq || { model: 'llama-3.3-70b-versatile' };
+const defaultModel = process.env.GROQ_MODEL || cfg.groq?.model || 'qwen/qwen3.8-27b';
+const groq = { model: defaultModel, ...(cfg.groq || {}) };
+if (process.env.GROQ_MODEL) groq.model = process.env.GROQ_MODEL;
 
 const keys = (process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || '')
   .split(',').map(k => k.trim()).filter(Boolean);
@@ -16,13 +18,13 @@ let lastHeaders = {};
 let queue = Promise.resolve();
 const GAP_MS = 2500;
 
-function askJson(messages) {
-  const job = queue.then(() => callGroq(messages));
+function askJson(messages, options = {}) {
+  const job = queue.then(() => callGroq(messages, 0, options));
   queue = job.then(() => sleep(GAP_MS), () => sleep(GAP_MS));
   return job;
 }
 
-async function callGroq(messages, attempt = 0) {
+async function callGroq(messages, attempt = 0, options = {}) {
   if (!keys.length) throw new Error('GROQ_API_KEY(S) not set');
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -31,8 +33,10 @@ async function callGroq(messages, attempt = 0) {
       'Authorization': `Bearer ${keys[keyIndex]}`,
     },
     body: JSON.stringify({
-      model: groq.model, messages,
-      temperature: 0.3, max_tokens: 900,
+      model: options.model || groq.model,
+      messages,
+      temperature: options.temperature ?? 0.3,
+      max_tokens: options.max_tokens ?? 2500,
       response_format: { type: 'json_object' },
     }),
   });
@@ -41,7 +45,7 @@ async function callGroq(messages, attempt = 0) {
     keyIndex = (keyIndex + 1) % keys.length;
     console.warn(`[groq] 429 - rotating to key #${keyIndex + 1}`);
     await sleep(1500);
-    return callGroq(messages, attempt + 1);
+    return callGroq(messages, attempt + 1, options);
   }
   if (!res.ok) throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
