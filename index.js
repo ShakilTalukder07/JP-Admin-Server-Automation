@@ -198,15 +198,39 @@ async function main() {
       registerSelfHostedSlashCommands,
       restoreSelfHostedCohort,
     } = require('./self-hosted-setup');
-    registerSelfHostedSetup(client, { onConfigured: activateConfiguredClient });
+    registerSelfHostedSetup(client, {
+      onConfigured: async (cohort) => {
+        if (!client.__jpConfiguredRuntimeStarted) {
+          await activateConfiguredClient();
+        } else if (cohort) {
+          try {
+            const { discoverChannels } = require('./discover');
+            await discoverChannels(client);
+          } catch (err) {
+            console.error(`[installer] Channel discovery for ${cohort.name} failed:`, err.message);
+          }
+          try {
+            const { registerCohortActivityAutomation } = require('./activity-automation');
+            if (typeof registerCohortActivityAutomation === 'function') {
+              registerCohortActivityAutomation(client, cohort);
+            }
+          } catch (err) {
+            console.error(`[installer] Activity automation registration for ${cohort.name} failed:`, err.message);
+          }
+        }
+      },
+    });
     client.once('clientReady', async () => {
       console.log(`✅ Installer logged in as ${client.user.tag}`);
       runtimeHealth.markReady();
       try {
         await registerSelfHostedSlashCommands(client);
         const restored = await restoreSelfHostedCohort(client);
-        if (restored) {
-          await checkBackend(restored);
+        if (restored && (Array.isArray(restored) ? restored.length : true)) {
+          const list = Array.isArray(restored) ? restored : [restored];
+          for (const item of list) {
+            await checkBackend(item);
+          }
           await activateConfiguredClient();
         }
         else console.log('[installer] Waiting for the server owner or an administrator to run /setup (or !setup)');

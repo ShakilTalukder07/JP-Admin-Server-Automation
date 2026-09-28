@@ -498,6 +498,32 @@ function activityResultLine(kind, result) {
   return `${kind}: completed.`;
 }
 
+function registerCohortActivityAutomation(client, cohort) {
+  for (const [kind, setting] of [
+    ['outreach', 'outreachprompttime'],
+    ['interview', 'interviewprompttime'],
+    ['jobtask', 'jobtaskprompttime'],
+    ['communication', 'communicationprompttime'],
+  ]) {
+    scheduleAtSetting(cohort, `activityprompt:${kind}`, setting, async () => {
+      if (!(await isOn(cohort, `${kind}prompt`)) || !(await isScheduledToday(cohort, `${kind}prompt`)) || (await isWarmup(cohort))) return;
+      await postPrompt(client, cohort, kind);
+    });
+  }
+  scheduleAtSetting(cohort, 'attendancewarning', 'attendancewarningtime', async () => {
+    await recoverAttendanceFollowup(client, cohort);
+  });
+  scheduleAtSetting(cohort, 'jobemergency', 'jobemergencytime', async () => {
+    if ((await isOn(cohort, 'jobemergency')) && !(await isWarmup(cohort))) await runJobEmergency(client, cohort);
+  });
+  scheduleAtSetting(cohort, 'interviewmorning', 'interviewmorningtime', async () => {
+    if ((await isOn(cohort, 'interviewfollowup')) && (await isScheduledToday(cohort, 'interviewfollowup')) && !(await isWarmup(cohort))) await runInterviewMorning(client, cohort);
+  });
+  scheduleAtSetting(cohort, 'interviewreview', 'interviewreviewtime', async () => {
+    if ((await isOn(cohort, 'interviewfollowup')) && (await isScheduledToday(cohort, 'interviewfollowup')) && !(await isWarmup(cohort))) await runInterviewReview(client, cohort);
+  });
+}
+
 module.exports = function registerActivityAutomation(client) {
   const recoverPending = async () => {
     await sleep(15 * 1000);
@@ -511,29 +537,7 @@ module.exports = function registerActivityAutomation(client) {
   else client.once('clientReady', recoverPending);
 
   for (const cohort of cohorts) {
-    for (const [kind, setting] of [
-      ['outreach', 'outreachprompttime'],
-      ['interview', 'interviewprompttime'],
-      ['jobtask', 'jobtaskprompttime'],
-      ['communication', 'communicationprompttime'],
-    ]) {
-      scheduleAtSetting(cohort, `activityprompt:${kind}`, setting, async () => {
-        if (!(await isOn(cohort, `${kind}prompt`)) || !(await isScheduledToday(cohort, `${kind}prompt`)) || (await isWarmup(cohort))) return;
-        await postPrompt(client, cohort, kind);
-      });
-    }
-    scheduleAtSetting(cohort, 'attendancewarning', 'attendancewarningtime', async () => {
-      await recoverAttendanceFollowup(client, cohort);
-    });
-    scheduleAtSetting(cohort, 'jobemergency', 'jobemergencytime', async () => {
-      if ((await isOn(cohort, 'jobemergency')) && !(await isWarmup(cohort))) await runJobEmergency(client, cohort);
-    });
-    scheduleAtSetting(cohort, 'interviewmorning', 'interviewmorningtime', async () => {
-      if ((await isOn(cohort, 'interviewfollowup')) && (await isScheduledToday(cohort, 'interviewfollowup')) && !(await isWarmup(cohort))) await runInterviewMorning(client, cohort);
-    });
-    scheduleAtSetting(cohort, 'interviewreview', 'interviewreviewtime', async () => {
-      if ((await isOn(cohort, 'interviewfollowup')) && (await isScheduledToday(cohort, 'interviewfollowup')) && !(await isWarmup(cohort))) await runInterviewReview(client, cohort);
-    });
+    registerCohortActivityAutomation(client, cohort);
   }
 
   client.on('messageCreate', async message => {
@@ -597,3 +601,4 @@ module.exports.privateContactLines = privateContactLines;
 module.exports.sendPrivateContactReport = sendPrivateContactReport;
 module.exports.withoutInterviews = withoutInterviews;
 module.exports.activityResultLine = activityResultLine;
+module.exports.registerCohortActivityAutomation = registerCohortActivityAutomation;

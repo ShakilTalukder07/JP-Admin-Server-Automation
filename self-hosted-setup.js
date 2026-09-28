@@ -70,10 +70,13 @@ function parseSetupCapsule(content, secret = installerSecret()) {
 }
 
 function cohortFromPayload(payload) {
+  const name = String(payload.name).trim();
+  const guildId = String(payload.guildId);
+  const registryKey = payload.registryKey || payload.key || ('cohort_' + guildId);
   return cohortDefaults({
-    name: String(payload.name).trim(),
-    registryKey: 'self_hosted',
-    guildId: String(payload.guildId),
+    name,
+    registryKey,
+    guildId,
     supervisorIds: payload.supervisorIds.map(String),
     appsScriptUrl: validateInstallerBackend(),
     apiKey: installerSecret(),
@@ -86,6 +89,7 @@ function setupPayload(cohort) {
   return {
     version: 1,
     name: cohort.name,
+    registryKey: cohort.registryKey,
     guildId: cohort.guildId,
     supervisorIds: [...cohort.supervisorIds],
     timezone: cohort.timezone,
@@ -158,15 +162,16 @@ async function restoreSelfHostedCohort(client) {
       restored.push(cohortFromPayload(payload));
     }
   }
-  if (restored.length > 1) throw new Error('self-hosted installer mode supports one configured server');
   if (!restored.length) return null;
-  cohorts.splice(0, cohorts.length, restored[0]);
-  const guild = client.guilds.cache.get(restored[0].guildId);
-  if (guild?.ownerId) {
-    await ensurePrivateBotAdmin(client, guild, guild.ownerId);
-    await saveSetupCapsule(client, restored[0]);
+  cohorts.splice(0, cohorts.length, ...restored);
+  for (const cohort of restored) {
+    const guild = client.guilds.cache.get(cohort.guildId);
+    if (guild?.ownerId) {
+      await ensurePrivateBotAdmin(client, guild, guild.ownerId);
+      await saveSetupCapsule(client, cohort);
+    }
   }
-  return restored[0];
+  return restored;
 }
 
 function adminOverwrites(guild, client, userId) {
@@ -364,10 +369,6 @@ async function openSelfHostedSetup(client, request) {
     return;
   }
   if (mode !== 'installer') return;
-  if (cohorts.length) {
-    await respond('This self-hosted bot is already paired with another server. Use that server’s private `#bot-admin`; no settings were changed here.');
-    return;
-  }
   if (!canStartInstallerSetup(guild, member, userId)) {
     await respond('Only this server’s owner or a member with **Administrator / Manage Server** can start setup.');
     return;
@@ -381,13 +382,15 @@ async function openSelfHostedSetup(client, request) {
   }
   cohort = cohortFromPayload({
     version: 1,
-    name: process.env.COHORT_NAME || guild.name,
+    name: (cohorts.length === 0 && process.env.COHORT_NAME) ? process.env.COHORT_NAME : guild.name,
     guildId: guild.id,
     supervisorIds,
     timezone: process.env.COHORT_TIMEZONE || 'Asia/Dhaka',
     channels: { supervisor: channel.id },
   });
-  cohorts.splice(0, cohorts.length, cohort);
+  const existingIndex = cohorts.findIndex(item => item.guildId === guild.id);
+  if (existingIndex >= 0) cohorts[existingIndex] = cohort;
+  else cohorts.push(cohort);
   await saveSetupCapsule(client, cohort);
   await channel.send(panelPayload(cohort));
   await respond(`Private setup is ready in <#${channel.id}>. The server owner was saved as the permanent recovery supervisor.`);
