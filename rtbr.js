@@ -65,29 +65,29 @@ async function ensureRtbrRole(guild) {
 async function syncRtbrRole(guild, rankedStudents) {
   const missingIds = rankedStudents.filter(student => !/^\d{15,22}$/.test(String(student.discordId || '')));
   if (missingIds.length) {
-    throw new Error(`${missingIds.length} ranked student(s) have no verified Discord ID; RTBR roles were left unchanged`);
+    console.warn(`[rtbr] ${missingIds.length} ranked student(s) have no verified Discord ID`);
   }
   const role = await ensureRtbrRole(guild);
   await guild.members.fetch();
-  const desired = new Set(rankedStudents.map(student => String(student.discordId)));
-  for (const memberId of desired) {
-    if (!guild.members.cache.has(memberId)) {
-      throw new Error(`Ranked Discord member ${memberId} is not currently in this server; RTBR roles were left unchanged`);
-    }
-  }
+  const validRanked = rankedStudents.filter(student => /^\d{15,22}$/.test(String(student.discordId || '')));
+  const desired = new Set(validRanked.map(student => String(student.discordId)));
   const remove = role.members.filter(member => !desired.has(member.id));
   let added = 0;
   for (const memberId of desired) {
     const member = guild.members.cache.get(memberId);
-    if (!member.roles.cache.has(role.id)) {
-      await member.roles.add(role, 'JP ADMIN weekly RTBR qualification');
+    if (member && !member.roles.cache.has(role.id)) {
+      await member.roles.add(role, 'JP ADMIN weekly RTBR qualification').catch(err => {
+        console.warn(`[rtbr] Failed to add role to ${memberId}:`, err.message);
+      });
       added++;
     }
   }
   for (const member of remove.values()) {
-    await member.roles.remove(role, 'JP ADMIN weekly RTBR recalculation');
+    await member.roles.remove(role, 'JP ADMIN weekly RTBR recalculation').catch(err => {
+      console.warn(`[rtbr] Failed to remove role from ${member.id}:`, err.message);
+    });
   }
-  return { roleId: role.id, added, removed: remove.size, qualified: desired.size };
+  return { roleId: role.id, added, removed: remove.size, qualified: desired.size, missingIds: missingIds.length };
 }
 
 async function postRtbr(client, cohort) {
@@ -100,8 +100,20 @@ async function postRtbr(client, cohort) {
   });
   const ranked = rankRtbrStudents(data.students, topCount);
   const guild = await client.guilds.fetch(cohort.guildId);
-  const roleResult = await syncRtbrRole(guild, ranked);
-  const channelId = await resolveChannel(cohort, 'channel_rtbr', cohort.channels.rtbr);
+
+  let roleResult = null;
+  try {
+    roleResult = await syncRtbrRole(guild, ranked);
+  } catch (roleError) {
+    console.warn(`[rtbr] ${cohort.name} role sync warning:`, roleError.message);
+    report(cohort.name, `RTBR role sync warning: ${roleError.message}`);
+  }
+
+  let channelId = await resolveChannel(cohort, 'channel_rtbr', cohort.channels?.rtbr);
+  if (!channelId) {
+    const found = guild.channels.cache.find(c => c.isTextBased() && (c.name.includes('right-to-be-referred') || c.name.includes('rtbr')));
+    channelId = found?.id || cohort.channels?.discussion;
+  }
   const channel = await client.channels.fetch(channelId);
   const payload = buildRtbrPayload(data.students, { days, topCount, jobTarget });
   if (!payload) {

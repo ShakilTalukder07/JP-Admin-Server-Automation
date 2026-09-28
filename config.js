@@ -202,7 +202,7 @@ function findCohort(guildId) {
 }
 
 module.exports = {
-  groq: { model: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b' },
+  groq: { model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile' },
   mode,
   installerMode,
   cohorts,

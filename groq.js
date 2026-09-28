@@ -6,7 +6,7 @@
 //  • getStatus() reads Groq's rate-limit headers for !groqstatus
 // ============================================================
 const cfg = require('./config');
-const defaultModel = process.env.GROQ_MODEL || cfg.groq?.model || 'qwen/qwen3.8-27b';
+const defaultModel = process.env.GROQ_MODEL || cfg.groq?.model || 'llama-3.3-70b-versatile';
 const groq = { model: defaultModel, ...(cfg.groq || {}) };
 if (process.env.GROQ_MODEL) groq.model = process.env.GROQ_MODEL;
 
