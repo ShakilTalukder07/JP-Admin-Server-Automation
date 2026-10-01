@@ -134,8 +134,11 @@ function controlKey() {
 function controlCohort() {
   const key = controlKey();
   if (!key) return null;
-  const cohort = cohorts.find(item => item.registryKey === key);
-  if (!cohort) throw new Error(`COHORT_CONTROL_KEY=${key} is not present in the bootstrap registry`);
+  const cohort = cohorts.find(item => item && item.registryKey === key);
+  if (!cohort) {
+    console.warn(`[startup] COHORT_CONTROL_KEY=${key} is not present in the bootstrap registry; using bootstrap registry`);
+    return null;
+  }
   return cohort;
 }
 
