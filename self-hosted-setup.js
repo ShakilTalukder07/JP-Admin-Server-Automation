@@ -18,7 +18,7 @@ const { syncMembers } = require('./roster');
 
 const PREFIX = 'jp-setup';
 const CAPSULE_PREFIX = 'JPADMIN_SETUP_V1:';
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 45000;
 
 function installerSecret() {
   const secret = String(process.env.COHORT_API_KEY || '').trim();
@@ -152,14 +152,19 @@ async function restoreSelfHostedCohort(client) {
     const candidates = [...channels.values()].filter(channel =>
       channel?.type === ChannelType.GuildText && normalizeChannelName(channel.name) === 'bot-admin');
     for (const channel of candidates) {
-      const message = await findCapsuleMessage(channel, client);
-      if (!message) continue;
-      const payload = parseSetupCapsule(message.content);
-      if (payload.guildId !== guild.id || payload.channels.supervisor !== channel.id) {
-        throw new Error(`saved setup in ${guild.name} does not match its private channel`);
+      try {
+        const message = await findCapsuleMessage(channel, client);
+        if (!message) continue;
+        const payload = parseSetupCapsule(message.content);
+        if (payload.guildId !== guild.id || payload.channels.supervisor !== channel.id) {
+          console.warn(`[installer] Setup in ${guild.name} does not match channel, skipping`);
+          continue;
+        }
+        payload.supervisorIds = ownerFirstSupervisorIds(guild.ownerId, payload.supervisorIds);
+        restored.push(cohortFromPayload(payload));
+      } catch (err) {
+        console.warn(`[installer] Could not restore capsule in ${guild.name}: ${err.message}`);
       }
-      payload.supervisorIds = ownerFirstSupervisorIds(guild.ownerId, payload.supervisorIds);
-      restored.push(cohortFromPayload(payload));
     }
   }
   if (!restored.length) return null;
@@ -299,10 +304,28 @@ async function checkBackend(cohort) {
   return data;
 }
 
-function configuredContext(guildId, channelId, userId) {
-  const cohort = cohorts.find(item => item.guildId === guildId);
-  if (!cohort?.supervisorIds?.includes(userId)) return null;
-  if (cohort.channels?.supervisor !== channelId) return null;
+function configuredContext(guildId, channelId, userId, guild = null, member = null, client = null) {
+  const targetGuildId = String(guildId || guild?.id || '');
+  let cohort = cohorts.find(item => item.guildId === targetGuildId);
+  if (!cohort) return null;
+
+  const currentUserId = String(userId || '');
+  const ownerId = String(guild?.ownerId || client?.guilds.cache.get(targetGuildId)?.ownerId || '');
+  const isOwner = Boolean(ownerId && ownerId === currentUserId);
+  const isAdmin = canStartInstallerSetup(guild || client?.guilds.cache.get(targetGuildId), member, currentUserId);
+
+  if ((isOwner || isAdmin) && !cohort.supervisorIds.includes(currentUserId)) {
+    cohort.supervisorIds = ownerFirstSupervisorIds(ownerId, cohort.supervisorIds, currentUserId);
+  }
+
+  if (channelId && cohort.channels?.supervisor !== channelId) {
+    const channel = client?.channels.cache.get(channelId);
+    if (channel && normalizeChannelName(channel.name) === 'bot-admin') {
+      cohort.channels.supervisor = channelId;
+    }
+  }
+
+  if (!cohort.supervisorIds.includes(currentUserId) && !isOwner && !isAdmin) return null;
   return cohort;
 }
 
@@ -445,7 +468,21 @@ function registerSelfHostedSetup(client, options = {}) {
       return;
     }
     if (!interaction.isButton() || !interaction.customId?.startsWith(`${PREFIX}:`)) return;
-    const cohort = configuredContext(interaction.guildId, interaction.channelId, interaction.user.id);
+    let cohort = configuredContext(interaction.guildId, interaction.channelId, interaction.user.id, interaction.guild, interaction.member, client);
+    if (!cohort && canStartInstallerSetup(interaction.guild, interaction.member, interaction.user.id)) {
+      cohort = cohortFromPayload({
+        version: 1,
+        name: (cohorts.length === 0 && process.env.COHORT_NAME) ? process.env.COHORT_NAME : interaction.guild.name,
+        guildId: interaction.guild.id,
+        supervisorIds: ownerFirstSupervisorIds(interaction.guild.ownerId, [], interaction.user.id),
+        timezone: process.env.COHORT_TIMEZONE || 'Asia/Dhaka',
+        channels: { supervisor: interaction.channelId },
+      });
+      const existingIdx = cohorts.findIndex(item => item.guildId === interaction.guild.id);
+      if (existingIdx >= 0) cohorts[existingIdx] = cohort;
+      else cohorts.push(cohort);
+      await saveSetupCapsule(client, cohort).catch(() => {});
+    }
     if (!cohort) {
       await interaction.reply({ content: 'This setup control is private to configured supervisors.', ephemeral: true }).catch(() => {});
       return;
