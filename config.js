@@ -190,9 +190,8 @@ const isolatedCohort = isolatedMode ? cohortDefaults({
   workshopGptUrl: process.env.WORKSHOP_GPT_URL,
 }) : null;
 
-// Kept in a separate file so the mentor ZIP can omit production-only IDs.
-// Installer mode never loads or requires this module.
-const legacyEjp = installerMode ? null : require('./legacy-cohort');
+let legacyEjp = null;
+try { legacyEjp = require('./legacy-cohort'); } catch {}
 
 const cohorts = registryCohorts || (isolatedCohort ? [isolatedCohort] : installerMode ? [] : [legacyEjp]);
 const mode = registryCohorts ? 'multi' : isolatedCohort ? 'isolated' : installerMode ? 'installer' : 'legacy';
