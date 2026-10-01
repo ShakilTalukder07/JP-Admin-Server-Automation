@@ -55,10 +55,14 @@ function registerClient(client) {
   if (client.__jpFeatureHandlersRegistered) return;
   client.__jpFeatureHandlersRegistered = true;
   if (client.isReady?.()) {
+    runtimeHealth.markReady();
     initializeReadyFeatures(client).catch(error => console.error('[ready] Feature initialization failed:', error.message));
   } else {
-    client.once('clientReady', () => initializeReadyFeatures(client)
-      .catch(error => console.error('[ready] Feature initialization failed:', error.message)));
+    client.once('clientReady', () => {
+      runtimeHealth.markReady();
+      initializeReadyFeatures(client)
+        .catch(error => console.error('[ready] Feature initialization failed:', error.message));
+    });
   }
 
   registerReporter(client);
